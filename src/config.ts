@@ -1,0 +1,86 @@
+export const ARENA = {
+  width: 17,
+  depth: 11,
+  halfWidth: 8.5,
+  halfDepth: 5.5,
+  playerRadius: 0.42,
+}
+
+export const ROLL = {
+  animationDuration: 1.05,
+  cooldown: 10,
+  passRadiusBonus: 0.22,
+}
+
+export const CLOAK = {
+  duration: 2.4,
+  cooldown: 10,
+  opacity: 0.3,
+}
+
+export const MOVEMENT = {
+  walkSpeed: 3.35,
+  runSpeed: 5.4,
+}
+
+export const MOBILE_BREAKPOINT = 720
+
+export const MOBILE_TUNING = {
+  playerRadius: 0.36,
+  missileSpeedMult: 0.85,
+  spawnIntervalBase: 1.2,
+  spawnIntervalDelta: 0.07,
+  arenaFov: 60,
+}
+
+export const DESKTOP_TUNING = {
+  spawnIntervalBase: 1.05,
+  spawnIntervalDelta: 0.075,
+}
+
+export const STORAGE_KEYS = {
+  best: 'chunsik-dodge-3d-best',
+  sound: 'chunsik-dodge-3d-sound',
+  camera: 'chunsik-dodge-3d-mobile-camera',
+  character: 'chunsik-dodge-3d-character',
+  characterP2: 'chunsik-dodge-3d-character-p2',
+  mode: 'chunsik-dodge-3d-mode',
+}
+
+import type { PlayerBindings } from './types'
+
+export const P1_BINDINGS: PlayerBindings = {
+  up: ['KeyW'],
+  down: ['KeyS'],
+  left: ['KeyA'],
+  right: ['KeyD'],
+  run: ['ShiftLeft'],
+  ability: ['Space'],
+}
+
+export const P2_BINDINGS: PlayerBindings = {
+  up: ['ArrowUp'],
+  down: ['ArrowDown'],
+  left: ['ArrowLeft'],
+  right: ['ArrowRight'],
+  run: ['ShiftRight'],
+  ability: ['Enter', 'NumpadEnter'],
+}
+
+export const SOLO_BINDINGS: PlayerBindings = {
+  up: ['KeyW', 'ArrowUp'],
+  down: ['KeyS', 'ArrowDown'],
+  left: ['KeyA', 'ArrowLeft'],
+  right: ['KeyD', 'ArrowRight'],
+  run: ['ShiftLeft', 'ShiftRight'],
+  ability: ['Space'],
+}
+
+export const VERSUS = {
+  spawnOffsetX: 4.5,
+  drawWindow: 0.05,
+}
+
+export function isMobileViewport(): boolean {
+  return window.innerWidth < MOBILE_BREAKPOINT
+}

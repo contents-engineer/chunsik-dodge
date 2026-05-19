@@ -1,0 +1,23 @@
+{
+  "models/chunsik.glb": "assets/chunsik-dodge/models/chunsik.glb",
+  "models/idle-01.glb": "assets/chunsik-dodge/models/idle-01.glb",
+  "models/idle-02.glb": "assets/chunsik-dodge/models/idle-02.glb",
+  "models/walk.glb": "assets/chunsik-dodge/models/walk.glb",
+  "models/run.glb": "assets/chunsik-dodge/models/run.glb",
+  "models/rolling.glb": "assets/chunsik-dodge/models/rolling.glb",
+  "models/surprise.glb": "assets/chunsik-dodge/models/surprise.glb",
+  "images/chunsik-uv.png": "assets/chunsik-dodge/images/chunsik-uv.png",
+  "images/paper.jpg": "assets/chunsik-dodge/images/paper.jpg",
+  "images/racing-map.png": "assets/chunsik-dodge/images/racing-map.png",
+  "images/shadow.png": "assets/chunsik-dodge/images/shadow.png",
+  "images/popup-chunsik.png": "assets/chunsik-dodge/images/popup-chunsik.png",
+  "images/icon-sound-on.png": "assets/chunsik-dodge/images/icon-sound-on.png",
+  "images/icon-sound-off.png": "assets/chunsik-dodge/images/icon-sound-off.png",
+  "images/icon-replay.png": "assets/chunsik-dodge/images/icon-replay.png",
+  "audio/main.mp3": "assets/chunsik-dodge/audio/main.mp3",
+  "audio/ui-click.wav": "assets/chunsik-dodge/audio/ui-click.wav",
+  "audio/attack-a.mp3": "assets/chunsik-dodge/audio/attack-a.mp3",
+  "audio/attack-b.mp3": "assets/chunsik-dodge/audio/attack-b.mp3",
+  "audio/hit.mp3": "assets/chunsik-dodge/audio/hit.mp3",
+  "fonts/kyobo-handwriting.woff2": "assets/chunsik-dodge/fonts/kyobo-handwriting.woff2"
+}
