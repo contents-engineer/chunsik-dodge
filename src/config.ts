@@ -1,9 +1,31 @@
-export const ARENA = {
-  width: 17,
-  depth: 11,
-  halfWidth: 8.5,
-  halfDepth: 5.5,
-  playerRadius: 0.42,
+import type { MapKey, PlayerBindings } from './types'
+
+export type ArenaSpec = {
+  width: number
+  depth: number
+  halfWidth: number
+  halfDepth: number
+  playerRadius: number
+  gridDivisions: number
+}
+
+export const MAP_PRESETS: Record<MapKey, ArenaSpec> = {
+  normal: {
+    width: 17,
+    depth: 11,
+    halfWidth: 8.5,
+    halfDepth: 5.5,
+    playerRadius: 0.42,
+    gridDivisions: 12,
+  },
+  extended: {
+    width: 24,
+    depth: 15.5,
+    halfWidth: 12,
+    halfDepth: 7.75,
+    playerRadius: 0.42,
+    gridDivisions: 17,
+  },
 }
 
 export const ROLL = {
@@ -45,9 +67,8 @@ export const STORAGE_KEYS = {
   character: 'chunsik-dodge-3d-character',
   characterP2: 'chunsik-dodge-3d-character-p2',
   mode: 'chunsik-dodge-3d-mode',
+  versusMap: 'chunsik-dodge-3d-versus-map',
 }
-
-import type { PlayerBindings } from './types'
 
 export const P1_BINDINGS: PlayerBindings = {
   up: ['KeyW'],

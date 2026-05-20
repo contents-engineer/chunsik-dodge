@@ -14,8 +14,9 @@ import {
 } from './assets'
 import { AudioManager } from './audio'
 import {
-  ARENA,
+  type ArenaSpec,
   CLOAK,
+  MAP_PRESETS,
   MOBILE_BREAKPOINT,
   MOBILE_TUNING,
   MOVEMENT,
@@ -40,6 +41,7 @@ import type {
   GameMode,
   GameState,
   JoystickState,
+  MapKey,
   Missile,
   MissileKind,
   MobileCameraMode,
@@ -90,6 +92,7 @@ class ChunsikDodgeGame {
   private readonly abilityTimerP2Label: HTMLSpanElement
   private readonly abilityTimerP2Value: HTMLSpanElement
   private readonly modePicker: HTMLDivElement
+  private readonly mapPicker: HTMLDivElement
   private readonly soloPicker: HTMLDivElement
   private readonly versusPicker: HTMLDivElement
   private readonly keyboardHelpSolo: HTMLDivElement
@@ -122,6 +125,12 @@ class ChunsikDodgeGame {
 
   private state: GameState = 'ready'
   private mode: GameMode = (localStorage.getItem(STORAGE_KEYS.mode) as GameMode) === 'versus' ? 'versus' : 'solo'
+  private versusMap: MapKey = (localStorage.getItem(STORAGE_KEYS.versusMap) as MapKey) === 'extended' ? 'extended' : 'normal'
+  private arena: ArenaSpec = MAP_PRESETS.normal
+  private arenaMeshes: THREE.Object3D[] = []
+  private paperTexture?: THREE.Texture
+  private sunLight?: THREE.DirectionalLight
+  private gameoverRevealTimer: number | null = null
   private soloCharacter: CharacterDefinition = findCharacter(
     localStorage.getItem(STORAGE_KEYS.character) ?? DEFAULT_CHARACTER_ID,
   )
@@ -178,6 +187,7 @@ class ChunsikDodgeGame {
     this.abilityTimerP2Label = this.getElement('ability-timer-p2-label')
     this.abilityTimerP2Value = this.getElement('ability-timer-p2-value')
     this.modePicker = this.getElement('mode-picker')
+    this.mapPicker = this.getElement('map-picker')
     this.soloPicker = this.getElement('character-picker')
     this.versusPicker = this.getElement('versus-picker')
     this.keyboardHelpSolo = this.getElement('keyboard-help-solo')
@@ -273,6 +283,10 @@ class ChunsikDodgeGame {
             <div id="mode-picker" class="mode-picker" role="radiogroup" aria-label="게임 모드">
               <button class="mode-option" type="button" data-game-mode="solo" role="radio" aria-checked="true">개인전</button>
               <button class="mode-option" type="button" data-game-mode="versus" role="radio" aria-checked="false">대결전</button>
+            </div>
+            <div id="map-picker" class="mode-picker map-picker" role="radiogroup" aria-label="맵 선택" hidden>
+              <button class="mode-option" type="button" data-map-key="normal" role="radio" aria-checked="true">일반맵</button>
+              <button class="mode-option" type="button" data-map-key="extended" role="radio" aria-checked="false">확장맵</button>
             </div>
             <div id="character-picker" class="character-picker" role="radiogroup" aria-label="캐릭터 선택">
               <span class="character-picker-title">캐릭터</span>
@@ -439,10 +453,8 @@ class ChunsikDodgeGame {
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
     sun.shadow.normalBias = 0.035
-    sun.shadow.camera.left = -12
-    sun.shadow.camera.right = 12
-    sun.shadow.camera.top = 12
-    sun.shadow.camera.bottom = -12
+    this.sunLight = sun
+    this.applyShadowCameraToArena(sun)
     this.scene.add(sun)
 
     const rim = new THREE.DirectionalLight(0xc9f4ff, 0.82)
@@ -511,6 +523,16 @@ class ChunsikDodgeGame {
       void this.setMode(next)
     })
 
+    this.mapPicker.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-map-key]')
+      if (!button) return
+      if (this.state !== 'ready') return
+      const next: MapKey = button.dataset.mapKey === 'extended' ? 'extended' : 'normal'
+      if (next === this.versusMap) return
+      this.audio.playSfx(ASSETS.audio.uiClick, 0.3)
+      void this.setVersusMap(next)
+    })
+
     this.soloPicker.addEventListener('click', (event) => {
       const target = event.target as HTMLElement
       const randomBtn = target.closest<HTMLButtonElement>('[data-character-random]')
@@ -565,6 +587,7 @@ class ChunsikDodgeGame {
 
     this.updateCameraToggle()
     this.updateModePicker()
+    this.updateMapPicker()
     this.updateCharacterPicker()
     this.updateModeChrome()
     this.updateRollButtonState()
@@ -573,11 +596,69 @@ class ChunsikDodgeGame {
 
   private async loadWorld(): Promise<void> {
     this.setLoading(12)
-    await this.createGround()
-    this.createArenaRails()
+    this.arena = MAP_PRESETS[this.getActiveMapKey()]
+    if (this.sunLight) {
+      this.applyShadowCameraToArena(this.sunLight)
+    }
+    await this.createDecorations()
+    await this.buildArenaMeshes()
     this.setLoading(38)
     await this.createPlayersForMode()
     this.setLoading(100)
+  }
+
+  private async createDecorations(): Promise<void> {
+    const racingMapTexture = await this.loadTexture(ASSETS.images.racingMap)
+    const racingMap = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.4, 4),
+      new THREE.MeshBasicMaterial({
+        map: racingMapTexture,
+        transparent: true,
+        opacity: 0.32,
+        depthWrite: false,
+      }),
+    )
+    racingMap.rotation.x = -Math.PI / 2
+    racingMap.rotation.z = -0.08
+    racingMap.position.set(3.3, 0.03, -1.15)
+    this.scene.add(racingMap)
+  }
+
+  private async rebuildArenaVisuals(): Promise<void> {
+    this.disposeArenaMeshes()
+    await this.buildArenaMeshes()
+  }
+
+  private disposeArenaMeshes(): void {
+    for (const mesh of this.arenaMeshes) {
+      this.scene.remove(mesh)
+      mesh.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose()
+          const material = child.material
+          if (Array.isArray(material)) {
+            material.forEach((m) => m.dispose())
+          } else {
+            material?.dispose()
+          }
+        } else if (child instanceof THREE.GridHelper) {
+          child.geometry.dispose()
+          const material = child.material
+          if (Array.isArray(material)) {
+            material.forEach((m) => m.dispose())
+          } else {
+            material.dispose()
+          }
+        }
+      })
+    }
+    this.arenaMeshes = []
+    this.ground = undefined
+  }
+
+  private async buildArenaMeshes(): Promise<void> {
+    await this.buildGroundAndGrid()
+    this.buildArenaRails()
   }
 
   private setLoading(percent: number): void {
@@ -669,6 +750,8 @@ class ChunsikDodgeGame {
       nextIdleVariant: 6,
       runHeld: false,
       alive: true,
+      ashTimer: null,
+      ashMaterials: [],
     }
   }
 
@@ -703,8 +786,10 @@ class ChunsikDodgeGame {
       localStorage.setItem(STORAGE_KEYS.characterP2, this.versusP2Character.id)
     }
     this.updateModePicker()
+    this.updateMapPicker()
     this.updateModeChrome()
     this.updateCharacterPicker()
+    await this.applyActiveArena()
     await this.createPlayersForMode()
     this.resetToReady()
   }
@@ -773,6 +858,8 @@ class ChunsikDodgeGame {
       player.cloakActiveUntil = 0
       this.setCloakActive(player, false)
     }
+    player.ashMaterials = []
+    player.ashTimer = null
     if (player.group) {
       this.scene.remove(player.group)
       player.group.traverse((child) => {
@@ -834,10 +921,55 @@ class ChunsikDodgeGame {
     }
   }
 
+  private updateMapPicker(): void {
+    for (const button of this.mapPicker.querySelectorAll<HTMLButtonElement>('[data-map-key]')) {
+      const active = button.dataset.mapKey === this.versusMap
+      button.classList.toggle('is-active', active)
+      button.setAttribute('aria-checked', String(active))
+    }
+  }
+
+  private getActiveMapKey(): MapKey {
+    return this.mode === 'versus' ? this.versusMap : 'normal'
+  }
+
+  private async setVersusMap(next: MapKey): Promise<void> {
+    if (this.versusMap === next) return
+    this.versusMap = next
+    localStorage.setItem(STORAGE_KEYS.versusMap, next)
+    this.updateMapPicker()
+    if (this.mode === 'versus') {
+      await this.applyActiveArena()
+    }
+  }
+
+  private async applyActiveArena(): Promise<void> {
+    const nextSpec = MAP_PRESETS[this.getActiveMapKey()]
+    if (this.arena === nextSpec) return
+    this.arena = nextSpec
+    if (this.sunLight) {
+      this.applyShadowCameraToArena(this.sunLight)
+    }
+    await this.rebuildArenaVisuals()
+    this.positionPlayersForStart()
+  }
+
+  private applyShadowCameraToArena(sun: THREE.DirectionalLight): void {
+    const margin = 4
+    const halfX = this.arena.halfWidth + margin
+    const halfZ = this.arena.halfDepth + margin
+    sun.shadow.camera.left = -halfX
+    sun.shadow.camera.right = halfX
+    sun.shadow.camera.top = halfZ
+    sun.shadow.camera.bottom = -halfZ
+    sun.shadow.camera.updateProjectionMatrix()
+  }
+
   private updateModeChrome(): void {
     const versus = this.mode === 'versus'
     this.soloPicker.hidden = versus
     this.versusPicker.hidden = !versus
+    this.mapPicker.hidden = !versus
     this.keyboardHelpSolo.hidden = versus
     this.keyboardHelpVersus.hidden = !versus
     this.bestPanel.hidden = versus
@@ -856,16 +988,19 @@ class ChunsikDodgeGame {
     document.body.classList.toggle('mode-versus', versus)
   }
 
-  private async createGround(): Promise<void> {
-    const paper = await this.loadTexture(ASSETS.images.paper)
-    paper.wrapS = THREE.RepeatWrapping
-    paper.wrapT = THREE.RepeatWrapping
-    paper.repeat.set(3, 2)
+  private async buildGroundAndGrid(): Promise<void> {
+    if (!this.paperTexture) {
+      this.paperTexture = await this.loadTexture(ASSETS.images.paper)
+      this.paperTexture.wrapS = THREE.RepeatWrapping
+      this.paperTexture.wrapT = THREE.RepeatWrapping
+    }
+    this.paperTexture.repeat.set((3 * this.arena.width) / 17, (2 * this.arena.depth) / 11)
+    this.paperTexture.needsUpdate = true
 
     this.ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(ARENA.width, ARENA.depth),
+      new THREE.PlaneGeometry(this.arena.width, this.arena.depth),
       new THREE.MeshStandardMaterial({
-        map: paper,
+        map: this.paperTexture,
         roughness: 0.86,
         metalness: 0,
       }),
@@ -873,28 +1008,15 @@ class ChunsikDodgeGame {
     this.ground.rotation.x = -Math.PI / 2
     this.ground.receiveShadow = true
     this.scene.add(this.ground)
+    this.arenaMeshes.push(this.ground)
 
-    const map = await this.loadTexture(ASSETS.images.racingMap)
-    const racingMap = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.4, 4),
-      new THREE.MeshBasicMaterial({
-        map,
-        transparent: true,
-        opacity: 0.32,
-        depthWrite: false,
-      }),
-    )
-    racingMap.rotation.x = -Math.PI / 2
-    racingMap.rotation.z = -0.08
-    racingMap.position.set(3.3, 0.03, -1.15)
-    this.scene.add(racingMap)
-
-    const grid = new THREE.GridHelper(ARENA.width, 12, 0x23666a, 0xb6cfc6)
+    const grid = new THREE.GridHelper(this.arena.width, this.arena.gridDivisions, 0x23666a, 0xb6cfc6)
     grid.position.y = 0.04
     this.scene.add(grid)
+    this.arenaMeshes.push(grid)
   }
 
-  private createArenaRails(): void {
+  private buildArenaRails(): void {
     const railMaterial = new THREE.MeshStandardMaterial({
       color: 0x244f52,
       roughness: 0.48,
@@ -907,8 +1029,8 @@ class ChunsikDodgeGame {
       emissive: 0x331100,
       emissiveIntensity: 0.15,
     })
-    const horizontal = new THREE.BoxGeometry(ARENA.width + 0.8, 0.22, 0.18)
-    const vertical = new THREE.BoxGeometry(0.18, 0.22, ARENA.depth + 0.8)
+    const horizontal = new THREE.BoxGeometry(this.arena.width + 0.8, 0.22, 0.18)
+    const vertical = new THREE.BoxGeometry(0.18, 0.22, this.arena.depth + 0.8)
 
     const rails = [
       new THREE.Mesh(horizontal, railMaterial),
@@ -916,21 +1038,24 @@ class ChunsikDodgeGame {
       new THREE.Mesh(vertical, railMaterial),
       new THREE.Mesh(vertical, railMaterial),
     ]
-    rails[0].position.set(0, 0.11, -ARENA.halfDepth - 0.16)
-    rails[1].position.set(0, 0.11, ARENA.halfDepth + 0.16)
-    rails[2].position.set(-ARENA.halfWidth - 0.16, 0.11, 0)
-    rails[3].position.set(ARENA.halfWidth + 0.16, 0.11, 0)
+    rails[0].position.set(0, 0.11, -this.arena.halfDepth - 0.16)
+    rails[1].position.set(0, 0.11, this.arena.halfDepth + 0.16)
+    rails[2].position.set(-this.arena.halfWidth - 0.16, 0.11, 0)
+    rails[3].position.set(this.arena.halfWidth + 0.16, 0.11, 0)
     for (const rail of rails) {
       rail.castShadow = true
       rail.receiveShadow = true
       this.scene.add(rail)
+      this.arenaMeshes.push(rail)
     }
 
-    for (const x of [-5.2, 0, 5.2]) {
+    const markerSpacing = this.arena.halfWidth * (5.2 / 8.5)
+    for (const x of [-markerSpacing, 0, markerSpacing]) {
       const marker = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.26, 0.28), accentMaterial)
-      marker.position.set(x, 0.18, -ARENA.halfDepth - 0.16)
+      marker.position.set(x, 0.18, -this.arena.halfDepth - 0.16)
       marker.castShadow = true
       this.scene.add(marker)
+      this.arenaMeshes.push(marker)
     }
   }
 
@@ -1072,6 +1197,7 @@ class ChunsikDodgeGame {
   }
 
   private startGame(): void {
+    this.clearGameoverRevealTimer()
     this.clearMissiles()
     this.clearParticles()
     this.state = 'playing'
@@ -1088,6 +1214,7 @@ class ChunsikDodgeGame {
         player.cloakActiveUntil = 0
         this.setCloakActive(player, false)
       }
+      this.clearAshEffect(player)
       player.alive = true
       player.input.set(0, 0)
       player.rollLockedInput.set(0, 0)
@@ -1106,6 +1233,7 @@ class ChunsikDodgeGame {
   }
 
   private resetToReady(): void {
+    this.clearGameoverRevealTimer()
     this.state = 'ready'
     this.clearMissiles()
     this.clearParticles()
@@ -1121,6 +1249,7 @@ class ChunsikDodgeGame {
         player.cloakActiveUntil = 0
         this.setCloakActive(player, false)
       }
+      this.clearAshEffect(player)
       player.alive = true
       this.playAction(player, 'idle')
     }
@@ -1154,6 +1283,7 @@ class ChunsikDodgeGame {
       player.alive = false
       this.spawnBurst(player.group?.position ?? new THREE.Vector3())
       this.playAction(player, 'surprise')
+      this.startAshEffect(player)
     }
     this.setRunButtonHeld(false)
     this.updateRollButtonState()
@@ -1161,11 +1291,10 @@ class ChunsikDodgeGame {
     this.menuText.textContent = '한 번 더 틈을 찾아보세요.'
     this.finalTimeLabel.textContent = '기록'
     this.finalTime.textContent = `${this.elapsed.toFixed(2)}초`
-    this.resultPanel.hidden = false
     this.startButton.textContent = '재도전'
-    this.menu.classList.remove('is-hidden')
     this.setStatus(1, '충돌')
     this.audio.playSfx(ASSETS.audio.hit, 0.58)
+    this.scheduleGameoverReveal()
 
     if (this.elapsed > this.bestScore) {
       this.bestScore = this.elapsed
@@ -1189,6 +1318,7 @@ class ChunsikDodgeGame {
       if (!player.alive) {
         this.spawnBurst(player.group?.position ?? new THREE.Vector3())
         this.playAction(player, 'surprise')
+        this.startAshEffect(player)
       } else {
         this.playAction(player, 'idle')
       }
@@ -1221,16 +1351,40 @@ class ChunsikDodgeGame {
     this.menuText.textContent = '한 판 더 어떠세요?'
     this.finalTimeLabel.textContent = label
     this.finalTime.textContent = `${this.elapsed.toFixed(2)}초 생존`
-    this.resultPanel.hidden = false
     this.startButton.textContent = '재대결'
-    this.menu.classList.remove('is-hidden')
     this.audio.playSfx(ASSETS.audio.hit, 0.58)
+    this.scheduleGameoverReveal()
     this.updateHud()
   }
 
   private endGame(): void {
     if (this.mode === 'versus') this.endGameVersus()
     else this.endGameSolo()
+  }
+
+  private scheduleGameoverReveal(): void {
+    this.clearGameoverRevealTimer()
+    const fallbackSec = 1.4
+    let durationSec = fallbackSec
+    for (const player of this.players) {
+      if (player.alive) continue
+      const action = player.actions.get('surprise')
+      const clipDuration = action?.getClip().duration
+      if (clipDuration && clipDuration > durationSec) durationSec = clipDuration
+    }
+    this.gameoverRevealTimer = window.setTimeout(() => {
+      this.gameoverRevealTimer = null
+      if (this.state !== 'gameover') return
+      this.resultPanel.hidden = false
+      this.menu.classList.remove('is-hidden')
+    }, durationSec * 1000)
+  }
+
+  private clearGameoverRevealTimer(): void {
+    if (this.gameoverRevealTimer !== null) {
+      window.clearTimeout(this.gameoverRevealTimer)
+      this.gameoverRevealTimer = null
+    }
   }
 
   private isKeyDown(codes: string[]): boolean {
@@ -1277,6 +1431,44 @@ class ChunsikDodgeGame {
     this.updateRollButtonState()
   }
 
+  private static readonly ASH_COLOR = new THREE.Color(0x4a4a4f)
+  private static readonly ASH_DURATION_SEC = 0.45
+
+  private startAshEffect(player: PlayerRuntime): void {
+    if (!player.group || player.ashTimer !== null) return
+    player.ashMaterials = []
+    player.group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      for (const mat of mats) {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          player.ashMaterials.push({ material: mat, originalColor: mat.color.getHex() })
+        }
+      }
+    })
+    player.ashTimer = 0
+  }
+
+  private updateAshEffects(delta: number): void {
+    for (const player of this.players) {
+      if (player.ashTimer === null || player.ashMaterials.length === 0) continue
+      player.ashTimer = Math.min(ChunsikDodgeGame.ASH_DURATION_SEC, player.ashTimer + delta)
+      const t = player.ashTimer / ChunsikDodgeGame.ASH_DURATION_SEC
+      const progress = t * t * (3 - 2 * t)
+      for (const snapshot of player.ashMaterials) {
+        snapshot.material.color.setHex(snapshot.originalColor).lerp(ChunsikDodgeGame.ASH_COLOR, progress)
+      }
+    }
+  }
+
+  private clearAshEffect(player: PlayerRuntime): void {
+    for (const snapshot of player.ashMaterials) {
+      snapshot.material.color.setHex(snapshot.originalColor)
+    }
+    player.ashMaterials = []
+    player.ashTimer = null
+  }
+
   private setCloakActive(player: PlayerRuntime, active: boolean): void {
     if (!player.group) return
     player.group.traverse((child) => {
@@ -1321,13 +1513,13 @@ class ChunsikDodgeGame {
       const radius = this.getPlayerRadius()
       player.group.position.x = THREE.MathUtils.clamp(
         player.group.position.x,
-        -ARENA.halfWidth + radius,
-        ARENA.halfWidth - radius,
+        -this.arena.halfWidth + radius,
+        this.arena.halfWidth - radius,
       )
       player.group.position.z = THREE.MathUtils.clamp(
         player.group.position.z,
-        -ARENA.halfDepth + radius,
-        ARENA.halfDepth - radius,
+        -this.arena.halfDepth + radius,
+        this.arena.halfDepth - radius,
       )
 
       player.lookTarget.set(
@@ -1370,13 +1562,13 @@ class ChunsikDodgeGame {
     for (const player of [p1, p2]) {
       player.group!.position.x = THREE.MathUtils.clamp(
         player.group!.position.x,
-        -ARENA.halfWidth + radius,
-        ARENA.halfWidth - radius,
+        -this.arena.halfWidth + radius,
+        this.arena.halfWidth - radius,
       )
       player.group!.position.z = THREE.MathUtils.clamp(
         player.group!.position.z,
-        -ARENA.halfDepth + radius,
-        ARENA.halfDepth - radius,
+        -this.arena.halfDepth + radius,
+        this.arena.halfDepth - radius,
       )
     }
   }
@@ -1568,13 +1760,13 @@ class ChunsikDodgeGame {
     const margin = 1.2
     const spawn = new THREE.Vector3()
     if (side === 0) {
-      spawn.set(THREE.MathUtils.randFloatSpread(ARENA.width), 0.58, -ARENA.halfDepth - margin)
+      spawn.set(THREE.MathUtils.randFloatSpread(this.arena.width), 0.58, -this.arena.halfDepth - margin)
     } else if (side === 1) {
-      spawn.set(ARENA.halfWidth + margin, 0.58, THREE.MathUtils.randFloatSpread(ARENA.depth))
+      spawn.set(this.arena.halfWidth + margin, 0.58, THREE.MathUtils.randFloatSpread(this.arena.depth))
     } else if (side === 2) {
-      spawn.set(THREE.MathUtils.randFloatSpread(ARENA.width), 0.58, ARENA.halfDepth + margin)
+      spawn.set(THREE.MathUtils.randFloatSpread(this.arena.width), 0.58, this.arena.halfDepth + margin)
     } else {
-      spawn.set(-ARENA.halfWidth - margin, 0.58, THREE.MathUtils.randFloatSpread(ARENA.depth))
+      spawn.set(-this.arena.halfWidth - margin, 0.58, THREE.MathUtils.randFloatSpread(this.arena.depth))
     }
 
     const target = this.pickAimTarget()
@@ -1657,20 +1849,20 @@ class ChunsikDodgeGame {
     const candidates: THREE.Vector3[] = []
 
     if (direction.x !== 0) {
-      for (const x of [-ARENA.halfWidth, ARENA.halfWidth]) {
+      for (const x of [-this.arena.halfWidth, this.arena.halfWidth]) {
         const t = (x - spawn.x) / direction.x
         const z = spawn.z + direction.z * t
-        if (t >= 0 && z >= -ARENA.halfDepth && z <= ARENA.halfDepth) {
+        if (t >= 0 && z >= -this.arena.halfDepth && z <= this.arena.halfDepth) {
           candidates.push(new THREE.Vector3(x, 0.075, z))
         }
       }
     }
 
     if (direction.z !== 0) {
-      for (const z of [-ARENA.halfDepth, ARENA.halfDepth]) {
+      for (const z of [-this.arena.halfDepth, this.arena.halfDepth]) {
         const t = (z - spawn.z) / direction.z
         const x = spawn.x + direction.x * t
-        if (t >= 0 && x >= -ARENA.halfWidth && x <= ARENA.halfWidth) {
+        if (t >= 0 && x >= -this.arena.halfWidth && x <= this.arena.halfWidth) {
           candidates.push(new THREE.Vector3(x, 0.075, z))
         }
       }
@@ -1686,10 +1878,10 @@ class ChunsikDodgeGame {
 
   private getDistanceToArenaExit(entry: THREE.Vector3, direction: THREE.Vector3): number {
     const distances: number[] = []
-    if (direction.x > 0) distances.push((ARENA.halfWidth - entry.x) / direction.x)
-    if (direction.x < 0) distances.push((-ARENA.halfWidth - entry.x) / direction.x)
-    if (direction.z > 0) distances.push((ARENA.halfDepth - entry.z) / direction.z)
-    if (direction.z < 0) distances.push((-ARENA.halfDepth - entry.z) / direction.z)
+    if (direction.x > 0) distances.push((this.arena.halfWidth - entry.x) / direction.x)
+    if (direction.x < 0) distances.push((-this.arena.halfWidth - entry.x) / direction.x)
+    if (direction.z > 0) distances.push((this.arena.halfDepth - entry.z) / direction.z)
+    if (direction.z < 0) distances.push((-this.arena.halfDepth - entry.z) / direction.z)
     return Math.max(4.8, Math.min(...distances.filter((distance) => distance > 0)))
   }
 
@@ -1780,8 +1972,8 @@ class ChunsikDodgeGame {
       }
 
       const outside =
-        Math.abs(missile.group.position.x) > ARENA.halfWidth + 3.2 ||
-        Math.abs(missile.group.position.z) > ARENA.halfDepth + 3.2
+        Math.abs(missile.group.position.x) > this.arena.halfWidth + 3.2 ||
+        Math.abs(missile.group.position.z) > this.arena.halfDepth + 3.2
       if (outside) {
         this.disposeMissile(index)
       }
@@ -1964,9 +2156,10 @@ class ChunsikDodgeGame {
 
     let base: THREE.Vector3
     if (this.mode === 'versus') {
+      const versusScale = Math.max(this.arena.width / 17, this.arena.depth / 11)
       base = mobileArenaView
-        ? new THREE.Vector3(0, 30, 7.6)
-        : new THREE.Vector3(0, 14.2, 13.4)
+        ? new THREE.Vector3(0, 30 * versusScale, 7.6 * versusScale)
+        : new THREE.Vector3(0, 14.2 * versusScale, 13.4 * versusScale)
     } else if (mobileArenaView) {
       base = mobileChunsikView
         ? new THREE.Vector3(this.mobileChunsikCameraPan.x, 15.6, 16.4 + this.mobileChunsikCameraPan.y)
@@ -2048,6 +2241,7 @@ class ChunsikDodgeGame {
     this.syncPlayerShadows()
     this.updateMissiles(delta)
     this.updateParticles(delta)
+    this.updateAshEffects(delta)
     this.updateCamera(delta)
     this.updateRollButtonState()
     this.updateAbilityTimers()
@@ -2071,7 +2265,7 @@ class ChunsikDodgeGame {
   }
 
   private getPlayerRadius(): number {
-    return isMobileViewport() ? MOBILE_TUNING.playerRadius : ARENA.playerRadius
+    return isMobileViewport() ? MOBILE_TUNING.playerRadius : this.arena.playerRadius
   }
 
   private updateCameraProjection(immediate: boolean): void {
@@ -2101,4 +2295,7 @@ if (!root) {
 }
 
 const game = new ChunsikDodgeGame(root)
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __game: ChunsikDodgeGame }).__game = game
+}
 void game.start()

@@ -4,6 +4,7 @@ import type { CharacterDefinition } from './assets'
 
 export type GameState = 'ready' | 'playing' | 'gameover'
 export type GameMode = 'solo' | 'versus'
+export type MapKey = 'normal' | 'extended'
 export type ActionName = 'idle' | 'idle2' | 'walk' | 'run' | 'rolling' | 'surprise'
 export type MobileCameraMode = 'arena' | 'chunsik'
 
@@ -70,4 +71,11 @@ export type PlayerRuntime = {
   nextIdleVariant: number
   runHeld: boolean
   alive: boolean
+  ashTimer: number | null
+  ashMaterials: AshMaterialSnapshot[]
+}
+
+export type AshMaterialSnapshot = {
+  material: THREE.MeshStandardMaterial
+  originalColor: number
 }

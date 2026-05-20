@@ -527,6 +527,10 @@ body:not(.mode-versus) .ability-timer--p2 {
   background: rgba(237, 247, 242, 0.6);
 }
 
+.mode-picker[hidden] {
+  display: none;
+}
+
 .mode-option {
   flex: 1;
   padding: 10px 14px;
