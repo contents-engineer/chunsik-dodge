@@ -35,6 +35,7 @@ import {
   pickMissileKind,
 } from './difficulty'
 import { createMissileMesh, orientObjectToVelocity } from './missile-mesh'
+import { gameRandom, gameRandomInt, gameRandomSpread } from './rng'
 import type {
   ActionName,
   BurstParticle,
@@ -142,6 +143,8 @@ class ChunsikDodgeGame {
   private bestScore = Number(localStorage.getItem(STORAGE_KEYS.best) ?? 0)
   private elapsed = 0
   private spawnTimer = 0
+  private pendingSpawns: { at: number; kind: MissileKind }[] = []
+  private simAccumulator = 0
   private shakeAmount = 0
   private currentPhaseIndex = -1
   private phaseLabelClearAt = 0
@@ -1203,6 +1206,7 @@ class ChunsikDodgeGame {
     this.state = 'playing'
     this.elapsed = 0
     this.spawnTimer = 0
+    this.pendingSpawns.length = 0
     this.currentPhaseIndex = -1
     this.phaseLabelClearAt = 0
     this.shakeAmount = 0
@@ -1239,6 +1243,7 @@ class ChunsikDodgeGame {
     this.clearParticles()
     this.elapsed = 0
     this.spawnTimer = 0
+    this.pendingSpawns.length = 0
     this.currentPhaseIndex = -1
     this.phaseLabelClearAt = 0
 
@@ -1433,6 +1438,8 @@ class ChunsikDodgeGame {
 
   private static readonly ASH_COLOR = new THREE.Color(0x4a4a4f)
   private static readonly ASH_DURATION_SEC = 0.45
+  private static readonly SIMULATION_STEP = 1 / 60
+  private static readonly MAX_SIM_STEPS_PER_FRAME = 8
 
   private startAshEffect(player: PlayerRuntime): void {
     if (!player.group || player.ashTimer !== null) return
@@ -1690,12 +1697,17 @@ class ChunsikDodgeGame {
     const interval = getSpawnInterval(this.elapsed, wave, mobile)
     if (this.spawnTimer >= interval) {
       this.spawnTimer = 0
-      const kind = pickMissileKind(this.elapsed)
+      const kind = pickMissileKind(this.elapsed, gameRandom)
       this.spawnMissileOfKind(kind)
       const doubleChance = PHASES[getPhaseIndex(this.elapsed)].doubleSpawnChance
-      if (doubleChance > 0 && Math.random() < doubleChance) {
-        window.setTimeout(() => this.spawnMissileOfKind('straight'), 180)
+      if (doubleChance > 0 && gameRandom() < doubleChance) {
+        this.pendingSpawns.push({ at: this.elapsed + 0.18, kind: 'straight' })
       }
+    }
+
+    while (this.pendingSpawns.length > 0 && this.pendingSpawns[0].at <= this.elapsed) {
+      const next = this.pendingSpawns.shift()!
+      this.spawnMissileOfKind(next.kind)
     }
 
     if (this.phaseLabelClearAt > 0 && this.elapsed >= this.phaseLabelClearAt) {
@@ -1737,7 +1749,7 @@ class ChunsikDodgeGame {
   }
 
   private spawnVolley(): void {
-    const side = Math.floor(Math.random() * 4)
+    const side = gameRandomInt(4)
     const fanOffsets = [-0.5, 0, 0.5]
     for (const offset of fanOffsets) {
       this.spawnSingleMissile('straight', { fixedSide: side, lateralOffset: offset })
@@ -1747,7 +1759,7 @@ class ChunsikDodgeGame {
   private pickAimTarget(): THREE.Vector3 {
     const alive = this.players.filter((p) => p.alive && p.group)
     if (alive.length === 0) return new THREE.Vector3()
-    const choice = alive[Math.floor(Math.random() * alive.length)]
+    const choice = alive[gameRandomInt(alive.length)]
     return choice.group!.position.clone()
   }
 
@@ -1756,23 +1768,23 @@ class ChunsikDodgeGame {
     opts: { fixedSide?: number; lateralOffset?: number } = {},
   ): void {
     if (this.players.length === 0) return
-    const side = opts.fixedSide ?? Math.floor(Math.random() * 4)
+    const side = opts.fixedSide ?? gameRandomInt(4)
     const margin = 1.2
     const spawn = new THREE.Vector3()
     if (side === 0) {
-      spawn.set(THREE.MathUtils.randFloatSpread(this.arena.width), 0.58, -this.arena.halfDepth - margin)
+      spawn.set(gameRandomSpread(this.arena.width), 0.58, -this.arena.halfDepth - margin)
     } else if (side === 1) {
-      spawn.set(this.arena.halfWidth + margin, 0.58, THREE.MathUtils.randFloatSpread(this.arena.depth))
+      spawn.set(this.arena.halfWidth + margin, 0.58, gameRandomSpread(this.arena.depth))
     } else if (side === 2) {
-      spawn.set(THREE.MathUtils.randFloatSpread(this.arena.width), 0.58, this.arena.halfDepth + margin)
+      spawn.set(gameRandomSpread(this.arena.width), 0.58, this.arena.halfDepth + margin)
     } else {
-      spawn.set(-this.arena.halfWidth - margin, 0.58, THREE.MathUtils.randFloatSpread(this.arena.depth))
+      spawn.set(-this.arena.halfWidth - margin, 0.58, gameRandomSpread(this.arena.depth))
     }
 
     const target = this.pickAimTarget()
     const aimSpread = kind === 'homing' ? 0.4 : 1.2
-    target.x += THREE.MathUtils.randFloatSpread(aimSpread)
-    target.z += THREE.MathUtils.randFloatSpread(aimSpread)
+    target.x += gameRandomSpread(aimSpread)
+    target.z += gameRandomSpread(aimSpread)
 
     if (opts.lateralOffset !== undefined) {
       const perpendicular = side === 0 || side === 2
@@ -1787,7 +1799,7 @@ class ChunsikDodgeGame {
 
     const phaseBoost = PHASES[getPhaseIndex(this.elapsed)].missileSpeedBoost
     const speedMult = isMobileViewport() ? MOBILE_TUNING.missileSpeedMult : 1
-    const baseSpeed = 4.5 + Math.min(5.5, this.elapsed * 0.08) + Math.random() * 0.8 + phaseBoost
+    const baseSpeed = 4.5 + Math.min(5.5, this.elapsed * 0.08) + gameRandom() * 0.8 + phaseBoost
     const kindSpeedMult = kind === 'big' ? 0.55 : kind === 'homing' ? 0.78 : 1
     const speed = baseSpeed * speedMult * kindSpeedMult
     const velocity = direction.multiplyScalar(speed)
@@ -1811,7 +1823,7 @@ class ChunsikDodgeGame {
       radius,
       age: 0,
       armedAt: 0.46,
-      spin: Math.random() > 0.5 ? 1 : -1,
+      spin: gameRandom() > 0.5 ? 1 : -1,
       playedSound: false,
       rollClearedBy: new Set<PlayerId>(),
       kind,
@@ -2229,20 +2241,40 @@ class ChunsikDodgeGame {
 
   private animate(): void {
     requestAnimationFrame(() => this.animate())
-    const delta = Math.min(this.clock.getDelta(), 0.05)
-    for (const player of this.players) {
-      player.mixer?.update(delta)
+    const realDelta = Math.min(this.clock.getDelta(), 0.25)
+    this.simAccumulator += realDelta
+
+    const step = ChunsikDodgeGame.SIMULATION_STEP
+    let stepsRemaining = ChunsikDodgeGame.MAX_SIM_STEPS_PER_FRAME
+    while (this.simAccumulator >= step && stepsRemaining > 0) {
+      this.simulateStep(step)
+      this.simAccumulator -= step
+      stepsRemaining--
     }
-    this.updateGame(delta)
+    if (this.simAccumulator >= step) {
+      this.simAccumulator = 0
+    }
+
+    this.renderFrame(realDelta)
+  }
+
+  private simulateStep(dt: number): void {
+    this.updateGame(dt)
     for (const player of this.players) {
-      this.updatePlayer(player, delta)
+      this.updatePlayer(player, dt)
     }
     this.resolvePlayerCollisions()
+    this.updateMissiles(dt)
+  }
+
+  private renderFrame(realDelta: number): void {
+    for (const player of this.players) {
+      player.mixer?.update(realDelta)
+    }
     this.syncPlayerShadows()
-    this.updateMissiles(delta)
-    this.updateParticles(delta)
-    this.updateAshEffects(delta)
-    this.updateCamera(delta)
+    this.updateParticles(realDelta)
+    this.updateAshEffects(realDelta)
+    this.updateCamera(realDelta)
     this.updateRollButtonState()
     this.updateAbilityTimers()
     this.renderer.render(this.scene, this.camera)
@@ -2297,5 +2329,28 @@ if (!root) {
 const game = new ChunsikDodgeGame(root)
 if (import.meta.env.DEV) {
   ;(window as unknown as { __game: ChunsikDodgeGame }).__game = game
+  void import('./rng').then(({ setRngSeed, gameRandom, clearRngSeed }) => {
+    ;(window as unknown as { __detCheck: () => void }).__detCheck = () => {
+      const sample = (seed: string, n: number) => {
+        setRngSeed(seed)
+        return Array.from({ length: n }, () => gameRandom())
+      }
+      const a = sample('chunsik-test', 200)
+      const b = sample('chunsik-test', 200)
+      const c = sample('different-seed', 200)
+      clearRngSeed()
+      const sameSeedMatch = a.every((v, i) => v === b[i])
+      const diffSeedDiffers = a.some((v, i) => v !== c[i])
+      console.log('[det-check] same seed → same sequence?', sameSeedMatch)
+      console.log('[det-check] different seed → different sequence?', diffSeedDiffers)
+      console.log('[det-check] first 3 of seed "chunsik-test":', a.slice(0, 3))
+      console.log('[det-check] first 3 of seed "different-seed":', c.slice(0, 3))
+      if (sameSeedMatch && diffSeedDiffers) {
+        console.log('%c[det-check] PASS ✓', 'color: #2e7b82; font-weight: bold')
+      } else {
+        console.error('[det-check] FAIL ✗')
+      }
+    }
+  })
 }
 void game.start()

@@ -11,9 +11,11 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "seedrandom": "^3.0.5",
     "three": "^0.182.0"
   },
   "devDependencies": {
+    "@types/seedrandom": "^3.0.8",
     "@types/three": "^0.182.0",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
