@@ -85,7 +85,7 @@ export function netTest(): void {
   const local = new LocalInputQueue()
   samples.forEach((s) => local.enqueue(s))
   const wire = local.serialize()
-  console.log('wire bytes:', wire.byteLength, '(expected', 2 + samples.length, ')')
+  console.log('wire bytes:', wire.byteLength, '(expected', 3 + samples.length, ')')
   const peer = new PeerInputQueue()
   peer.ingestSerialized(wire)
   for (let i = 0; i < samples.length; i++) {

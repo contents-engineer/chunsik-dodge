@@ -4,6 +4,13 @@ export const SYNC_DIVISOR = 1 << 16
 export const BUFFER_LENGTH = 8
 const RESEND_WINDOW = BUFFER_LENGTH * 2
 
+export const MESSAGE_KIND = {
+  INPUT: 0,
+  RESTART_ROUND: 1,
+  CHARACTER_PICK: 2,
+} as const
+export type MessageKind = (typeof MESSAGE_KIND)[keyof typeof MESSAGE_KIND]
+
 export type InputWithSync = {
   syncCounter: number
   input: PlayerInput
@@ -47,11 +54,12 @@ export class LocalInputQueue {
     if (this.items.length === 0) {
       return new ArrayBuffer(0)
     }
-    const buf = new ArrayBuffer(2 + this.items.length)
+    const buf = new ArrayBuffer(3 + this.items.length)
     const view = new DataView(buf)
-    view.setUint16(0, this.items[0].syncCounter, true)
+    view.setUint8(0, MESSAGE_KIND.INPUT)
+    view.setUint16(1, this.items[0].syncCounter, true)
     for (let i = 0; i < this.items.length; i++) {
-      view.setUint8(2 + i, packInput(this.items[i].input))
+      view.setUint8(3 + i, packInput(this.items[i].input))
     }
     return buf
   }
@@ -67,13 +75,14 @@ export class PeerInputQueue {
   private readonly items: InputWithSync[] = []
 
   ingestSerialized(buf: ArrayBuffer): void {
-    if (buf.byteLength < 3) return
+    if (buf.byteLength < 4) return
     const view = new DataView(buf)
-    const startCounter = view.getUint16(0, true)
-    const count = buf.byteLength - 2
+    if (view.getUint8(0) !== MESSAGE_KIND.INPUT) return
+    const startCounter = view.getUint16(1, true)
+    const count = buf.byteLength - 3
     for (let i = 0; i < count; i++) {
       const counter = (startCounter + i) % SYNC_DIVISOR
-      this.acceptIfNew(counter, unpackInput(view.getUint8(2 + i)))
+      this.acceptIfNew(counter, unpackInput(view.getUint8(3 + i)))
     }
   }
 

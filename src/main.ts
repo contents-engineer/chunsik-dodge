@@ -38,7 +38,7 @@ import { createMissileMesh, orientObjectToVelocity } from './missile-mesh'
 import { gameRandom, gameRandomInt, gameRandomSpread, setRngSeed, clearRngSeed } from './rng'
 import { OnlineNet, type OnlineRole, type OnlineNetEvents } from './net/online-net'
 import { NEUTRAL_INPUT, type PlayerInput } from './net/input-packing'
-import { SYNC_DIVISOR, BUFFER_LENGTH } from './net/input-queue'
+import { SYNC_DIVISOR, BUFFER_LENGTH, MESSAGE_KIND, type MessageKind } from './net/input-queue'
 import type {
   ActionName,
   BurstParticle,
@@ -537,7 +537,7 @@ class ChunsikDodgeGame {
         if (this.state === 'playing' && this.mode === 'versus' && !this.online) {
           this.tryAbility(this.players[1])
         } else if (this.state !== 'playing') {
-          this.startGame()
+          this.requestStartGame()
         }
       }
       if (event.code === 'Digit1' || event.code === 'Numpad1') this.setMobileCameraMode('arena')
@@ -548,7 +548,7 @@ class ChunsikDodgeGame {
       this.updateRunButtonState()
     })
 
-    this.startButton.addEventListener('click', () => this.startGame())
+    this.startButton.addEventListener('click', () => this.requestStartGame())
     this.resetButton.addEventListener('click', () => this.resetToReady())
     this.soundButton.addEventListener('click', () => {
       this.audio.setEnabled(!this.audio.isEnabled())
@@ -2481,6 +2481,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
         this.handleOnlineDisconnected()
       },
+      onControl: (kind) => this.handleOnlineControl(kind),
     })
     net.connectAsHost()
   }
@@ -2506,6 +2507,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
         this.handleOnlineDisconnected()
       },
+      onControl: (kind) => this.handleOnlineControl(kind),
     })
     net.connectAsGuest(roomId)
   }
@@ -2578,6 +2580,28 @@ class ChunsikDodgeGame {
     this.online.local.reset()
     this.online.peer.reset()
     this.startGame()
+  }
+
+  private requestStartGame(): void {
+    if (this.state === 'playing') return
+    if (this.online && this.online.isChannelOpen()) {
+      const roomId = this.online.getRoomId()
+      if (!roomId) return
+      this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
+      this.startOnlineGame(roomId)
+      return
+    }
+    this.startGame()
+  }
+
+  private handleOnlineControl(kind: MessageKind): void {
+    if (kind === MESSAGE_KIND.RESTART_ROUND) {
+      if (!this.online) return
+      if (this.state === 'playing') return
+      const roomId = this.online.getRoomId()
+      if (!roomId) return
+      this.startOnlineGame(roomId)
+    }
   }
 
   private isSimMobile(): boolean {

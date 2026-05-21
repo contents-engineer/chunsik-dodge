@@ -1,6 +1,6 @@
 import { PeerChannel } from './channel'
 import { Signaling, type SignalErrorReason } from './signaling'
-import { LocalInputQueue, PeerInputQueue } from './input-queue'
+import { LocalInputQueue, MESSAGE_KIND, PeerInputQueue, type MessageKind } from './input-queue'
 import type { PlayerInput } from './input-packing'
 
 export const SIGNAL_URL = 'wss://chunsik-dodge.fly.dev'
@@ -13,7 +13,11 @@ export type OnlineNetEvents = {
   onChannelOpen?: () => void
   onChannelClose?: () => void
   onError?: (reason: SignalErrorReason | 'channel-error', detail?: unknown) => void
+  onControl?: (kind: MessageKind, payload: Uint8Array) => void
 }
+
+const CONTROL_RESEND_COUNT = 4
+const CONTROL_RESEND_INTERVAL_MS = 60
 
 export class OnlineNet {
   readonly role: OnlineRole
@@ -78,7 +82,7 @@ export class OnlineNet {
         this.channelOpen = true
         this.events.onChannelOpen?.()
       },
-      onMessage: (data) => this.peer.ingestSerialized(data),
+      onMessage: (data) => this.handleIncoming(data),
       onClose: () => {
         this.channelOpen = false
         this.events.onChannelClose?.()
@@ -97,6 +101,39 @@ export class OnlineNet {
     if (!this.channelOpen || !this.channel) return
     const buf = this.local.serialize()
     if (buf.byteLength > 0) this.channel.send(buf)
+  }
+
+  sendControl(kind: MessageKind, payload: Uint8Array = new Uint8Array(0)): void {
+    if (!this.channelOpen || !this.channel) return
+    if (kind === MESSAGE_KIND.INPUT) return
+    const buf = new ArrayBuffer(1 + payload.byteLength)
+    const view = new Uint8Array(buf)
+    view[0] = kind
+    view.set(payload, 1)
+    const channel = this.channel
+    channel.send(buf)
+    let sent = 1
+    const id = window.setInterval(() => {
+      if (!this.channelOpen || !this.channel) {
+        window.clearInterval(id)
+        return
+      }
+      channel.send(buf)
+      sent++
+      if (sent >= CONTROL_RESEND_COUNT) window.clearInterval(id)
+    }, CONTROL_RESEND_INTERVAL_MS)
+  }
+
+  private handleIncoming(data: ArrayBuffer): void {
+    if (data.byteLength < 1) return
+    const view = new Uint8Array(data)
+    const kind = view[0] as MessageKind
+    if (kind === MESSAGE_KIND.INPUT) {
+      this.peer.ingestSerialized(data)
+      return
+    }
+    const payload = view.slice(1)
+    this.events.onControl?.(kind, payload)
   }
 
   close(): void {
