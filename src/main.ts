@@ -637,6 +637,7 @@ class ChunsikDodgeGame {
     this.versusPicker.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-versus-id]')
       if (!button) return
+      if (this.online && this.online.role === 'guest') return
       const characterId = button.dataset.versusId
       const slot = button.dataset.playerSlot === '2' ? 2 : 1
       if (!characterId) return
@@ -661,6 +662,9 @@ class ChunsikDodgeGame {
       this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
       this.updateCharacterPicker()
       void this.applySelectionToPlayers()
+      if (this.online && this.online.role === 'host') {
+        this.sendCharacterPickToPeer()
+      }
     })
 
     this.updateCameraToggle()
@@ -802,13 +806,6 @@ class ChunsikDodgeGame {
       const player = this.createPlayerSlot(1, SOLO_BINDINGS, this.soloCharacter)
       this.players = [player]
       await this.loadCharacterForPlayer(player)
-    } else if (this.mode === 'online') {
-      const onlineP1 = CHARACTERS[0]!
-      const onlineP2 = CHARACTERS[1] ?? CHARACTERS[0]!
-      const p1 = this.createPlayerSlot(1, P1_BINDINGS, onlineP1)
-      const p2 = this.createPlayerSlot(2, P2_BINDINGS, onlineP2)
-      this.players = [p1, p2]
-      await Promise.all([this.loadCharacterForPlayer(p1), this.loadCharacterForPlayer(p2)])
     } else {
       const p1 = this.createPlayerSlot(1, P1_BINDINGS, this.versusP1Character)
       const p2 = this.createPlayerSlot(2, P2_BINDINGS, this.versusP2Character)
@@ -1057,7 +1054,7 @@ class ChunsikDodgeGame {
     const online = this.mode === 'online'
     const twoPlayer = versus || online
     this.soloPicker.hidden = !solo
-    this.versusPicker.hidden = !versus
+    this.versusPicker.hidden = !versus && !online
     this.onlinePicker.hidden = !online
     this.mapPicker.hidden = !versus
     this.keyboardHelpSolo.hidden = !solo
@@ -2471,6 +2468,7 @@ class ChunsikDodgeGame {
       onChannelOpen: () => {
         const roomId = this.onlineRoomIdLabel.textContent ?? ''
         this.setOnlineStatus(`연결됨 — 게임 시작`, 'ok')
+        this.sendCharacterPickToPeer()
         if (roomId) this.startOnlineGame(roomId)
       },
       onChannelClose: () => {
@@ -2481,7 +2479,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
         this.handleOnlineDisconnected()
       },
-      onControl: (kind) => this.handleOnlineControl(kind),
+      onControl: (kind, payload) => this.handleOnlineControl(kind, payload),
     })
     net.connectAsHost()
   }
@@ -2496,8 +2494,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus('연결 협상 중…')
       },
       onChannelOpen: () => {
-        this.setOnlineStatus('연결됨 — 게임 시작', 'ok')
-        this.startOnlineGame(roomId)
+        this.setOnlineStatus('연결됨 — 호스트의 캐릭터 정보 대기 중…', 'ok')
       },
       onChannelClose: () => {
         this.setOnlineStatus('상대 연결이 끊어졌습니다', 'error')
@@ -2507,7 +2504,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
         this.handleOnlineDisconnected()
       },
-      onControl: (kind) => this.handleOnlineControl(kind),
+      onControl: (kind, payload) => this.handleOnlineControl(kind, payload),
     })
     net.connectAsGuest(roomId)
   }
@@ -2549,10 +2546,17 @@ class ChunsikDodgeGame {
 
   async enterOnlineMode(role: OnlineRole, events: OnlineNetEvents = {}): Promise<OnlineNet> {
     this.exitOnlineMode()
-    const fixedP1 = CHARACTERS[0]
-    const fixedP2 = CHARACTERS[1] ?? CHARACTERS[0]
-    if (fixedP1) this.versusP1Character = fixedP1
-    if (fixedP2) this.versusP2Character = fixedP2
+    if (role === 'guest') {
+      const defP1 = CHARACTERS[0]
+      const defP2 = CHARACTERS[1] ?? CHARACTERS[0]
+      if (defP1) this.versusP1Character = defP1
+      if (defP2) this.versusP2Character = defP2
+    } else {
+      if (this.versusP1Character.id === this.versusP2Character.id) {
+        const alt = CHARACTERS.find((c) => c.pickerVisible && c.id !== this.versusP1Character.id)
+        if (alt) this.versusP2Character = alt
+      }
+    }
     this.setMobileCameraMode('arena')
     await this.setMode('online')
     await this.createPlayersForMode()
@@ -2587,6 +2591,7 @@ class ChunsikDodgeGame {
     if (this.online && this.online.isChannelOpen()) {
       const roomId = this.online.getRoomId()
       if (!roomId) return
+      if (this.online.role === 'host') this.sendCharacterPickToPeer()
       this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
       this.startOnlineGame(roomId)
       return
@@ -2594,13 +2599,45 @@ class ChunsikDodgeGame {
     this.startGame()
   }
 
-  private handleOnlineControl(kind: MessageKind): void {
+  private handleOnlineControl(kind: MessageKind, payload?: Uint8Array): void {
     if (kind === MESSAGE_KIND.RESTART_ROUND) {
       if (!this.online) return
       if (this.state === 'playing') return
       const roomId = this.online.getRoomId()
       if (!roomId) return
       this.startOnlineGame(roomId)
+      return
+    }
+    if (kind === MESSAGE_KIND.CHARACTER_PICK) {
+      void this.applyPeerCharacterPick(payload)
+      return
+    }
+  }
+
+  private sendCharacterPickToPeer(): void {
+    if (!this.online) return
+    if (this.online.role !== 'host') return
+    const p1Idx = CHARACTERS.findIndex((c) => c.id === this.versusP1Character.id)
+    const p2Idx = CHARACTERS.findIndex((c) => c.id === this.versusP2Character.id)
+    const payload = new Uint8Array([Math.max(0, p1Idx), Math.max(0, p2Idx)])
+    this.online.sendControl(MESSAGE_KIND.CHARACTER_PICK, payload)
+  }
+
+  private async applyPeerCharacterPick(payload?: Uint8Array): Promise<void> {
+    if (!this.online || this.online.role !== 'guest') return
+    if (!payload || payload.byteLength < 2) return
+    const p1 = CHARACTERS[payload[0]] ?? CHARACTERS[0]
+    const p2 = CHARACTERS[payload[1]] ?? CHARACTERS[1] ?? CHARACTERS[0]
+    if (!p1 || !p2) return
+    const changed = this.versusP1Character.id !== p1.id || this.versusP2Character.id !== p2.id
+    this.versusP1Character = p1
+    this.versusP2Character = p2
+    if (changed) await this.createPlayersForMode()
+    this.updateCharacterPicker()
+    this.updateModeChrome()
+    if (this.state !== 'playing') {
+      const roomId = this.online.getRoomId()
+      if (roomId) this.startOnlineGame(roomId)
     }
   }
 
