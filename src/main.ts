@@ -99,6 +99,14 @@ class ChunsikDodgeGame {
   private readonly mapPicker: HTMLDivElement
   private readonly soloPicker: HTMLDivElement
   private readonly versusPicker: HTMLDivElement
+  private readonly onlinePicker: HTMLDivElement
+  private readonly onlineCreateBtn: HTMLButtonElement
+  private readonly onlineJoinBtn: HTMLButtonElement
+  private readonly onlineCopyBtn: HTMLButtonElement
+  private readonly onlineRoomIdRow: HTMLDivElement
+  private readonly onlineRoomIdLabel: HTMLElement
+  private readonly onlineRoomIdInput: HTMLInputElement
+  private readonly onlineStatus: HTMLParagraphElement
   private readonly keyboardHelpSolo: HTMLDivElement
   private readonly keyboardHelpVersus: HTMLDivElement
   private readonly touchControls: HTMLDivElement
@@ -201,6 +209,14 @@ class ChunsikDodgeGame {
     this.mapPicker = this.getElement('map-picker')
     this.soloPicker = this.getElement('character-picker')
     this.versusPicker = this.getElement('versus-picker')
+    this.onlinePicker = this.getElement('online-picker')
+    this.onlineCreateBtn = this.getElement('online-create-btn')
+    this.onlineJoinBtn = this.getElement('online-join-btn')
+    this.onlineCopyBtn = this.getElement('online-copy-btn')
+    this.onlineRoomIdRow = this.getElement('online-room-id-row')
+    this.onlineRoomIdLabel = this.getElement('online-room-id')
+    this.onlineRoomIdInput = this.getElement('online-room-id-input')
+    this.onlineStatus = this.getElement('online-status')
     this.keyboardHelpSolo = this.getElement('keyboard-help-solo')
     this.keyboardHelpVersus = this.getElement('keyboard-help-versus')
     this.touchControls = this.getElement('touch-controls')
@@ -222,6 +238,7 @@ class ChunsikDodgeGame {
     this.setupRenderer()
     this.setupScene()
     this.setupUi()
+    this.setupOnlineUi()
     this.updateHud()
     this.updateSoundButton()
     await this.loadWorld()
@@ -294,6 +311,7 @@ class ChunsikDodgeGame {
             <div id="mode-picker" class="mode-picker" role="radiogroup" aria-label="게임 모드">
               <button class="mode-option" type="button" data-game-mode="solo" role="radio" aria-checked="true">개인전</button>
               <button class="mode-option" type="button" data-game-mode="versus" role="radio" aria-checked="false">대결전</button>
+              <button class="mode-option" type="button" data-game-mode="online" role="radio" aria-checked="false">온라인</button>
             </div>
             <div id="map-picker" class="mode-picker map-picker" role="radiogroup" aria-label="맵 선택" hidden>
               <button class="mode-option" type="button" data-map-key="normal" role="radio" aria-checked="true">일반맵</button>
@@ -371,6 +389,24 @@ class ChunsikDodgeGame {
                 ).join('')}
               </div>
               <p class="character-picker-hint">같은 캐릭터는 동시에 고를 수 없어요</p>
+            </div>
+            <div id="online-picker" class="online-picker" hidden>
+              <div class="online-section">
+                <button id="online-create-btn" class="online-action" type="button">방 만들기</button>
+                <div id="online-room-id-row" class="online-room-id-row" hidden>
+                  <span class="online-room-id-label">방 ID</span>
+                  <code id="online-room-id" class="online-room-id"></code>
+                  <button id="online-copy-btn" class="online-mini-btn" type="button">복사</button>
+                </div>
+              </div>
+              <div class="online-section">
+                <label class="online-join-label" for="online-room-id-input">친구의 방 ID</label>
+                <div class="online-join-row">
+                  <input id="online-room-id-input" class="online-room-id-input" type="text" placeholder="예: 02d361" maxlength="32" autocomplete="off" spellcheck="false" />
+                  <button id="online-join-btn" class="online-action" type="button">들어가기</button>
+                </div>
+              </div>
+              <p id="online-status" class="online-status" role="status">방을 만들거나 친구의 방 ID를 입력하세요</p>
             </div>
             <div id="keyboard-help-solo" class="keyboard-help" aria-label="키보드 조작법">
               <span class="keyboard-help-title">키보드 조작</span>
@@ -536,10 +572,17 @@ class ChunsikDodgeGame {
     this.modePicker.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game-mode]')
       if (!button) return
-      const next = button.dataset.gameMode === 'versus' ? 'versus' : 'solo'
-      if (next === this.mode) return
+      const raw = button.dataset.gameMode
+      const next: GameMode = raw === 'versus' ? 'versus' : raw === 'online' ? 'online' : 'solo'
+      if (next === this.mode && !(next === 'online' && !this.online)) return
       this.audio.playSfx(ASSETS.audio.uiClick, 0.3)
-      void this.setMode(next)
+      if (next === 'online') {
+        this.exitOnlineMode()
+        void this.setMode('online')
+      } else {
+        this.exitOnlineMode()
+        void this.setMode(next)
+      }
     })
 
     this.mapPicker.addEventListener('click', (event) => {
@@ -993,26 +1036,36 @@ class ChunsikDodgeGame {
   }
 
   private updateModeChrome(): void {
+    const solo = this.mode === 'solo'
     const versus = this.mode === 'versus'
-    this.soloPicker.hidden = versus
+    const online = this.mode === 'online'
+    const twoPlayer = versus || online
+    this.soloPicker.hidden = !solo
     this.versusPicker.hidden = !versus
+    this.onlinePicker.hidden = !online
     this.mapPicker.hidden = !versus
-    this.keyboardHelpSolo.hidden = versus
-    this.keyboardHelpVersus.hidden = !versus
-    this.bestPanel.hidden = versus
-    this.p1Panel.hidden = !versus
-    this.p2Panel.hidden = !versus
-    this.statusValueP2.hidden = !versus
-    this.touchControls.classList.toggle('is-hidden', versus)
-    this.menuTitle.textContent = versus ? '대결전 출격 준비' : '춘식이 미사일 회피'
+    this.keyboardHelpSolo.hidden = !solo
+    this.keyboardHelpVersus.hidden = !twoPlayer
+    this.bestPanel.hidden = !solo
+    this.p1Panel.hidden = !twoPlayer
+    this.p2Panel.hidden = !twoPlayer
+    this.statusValueP2.hidden = !twoPlayer
+    this.touchControls.classList.toggle('is-hidden', !solo)
+    if (online) this.menuTitle.textContent = '온라인 대결전 출격 준비'
+    else if (versus) this.menuTitle.textContent = '대결전 출격 준비'
+    else this.menuTitle.textContent = '춘식이 미사일 회피'
     if (versus) {
       this.menuText.textContent = '두 플레이어가 한 아레나에서 끝까지 살아남으세요.'
       this.p1Name.textContent = this.versusP1Character.name
       this.p2Name.textContent = this.versusP2Character.name
+    } else if (online) {
+      this.menuText.textContent = '방을 만들거나 친구의 방 ID로 입장해 함께 회피하세요.'
+      this.p1Name.textContent = (CHARACTERS[0]?.name ?? '1P')
+      this.p2Name.textContent = (CHARACTERS[1]?.name ?? '2P')
     } else {
       this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
     }
-    document.body.classList.toggle('mode-versus', versus)
+    document.body.classList.toggle('mode-versus', twoPlayer)
   }
 
   private async buildGroundAndGrid(): Promise<void> {
@@ -1285,10 +1338,16 @@ class ChunsikDodgeGame {
     this.positionPlayersForStart()
     this.setRunButtonHeld(false)
     this.updateRollButtonState()
-    this.menuTitle.textContent = this.mode === 'versus' ? '대결전 출격 준비' : '춘식이 미사일 회피'
-    this.menuText.textContent = this.mode === 'versus'
-      ? '두 플레이어가 한 아레나에서 끝까지 살아남으세요.'
-      : '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
+    if (this.mode === 'online') {
+      this.menuTitle.textContent = '온라인 대결전 출격 준비'
+      this.menuText.textContent = '방을 만들거나 친구의 방 ID로 입장해 함께 회피하세요.'
+    } else if (this.mode === 'versus') {
+      this.menuTitle.textContent = '대결전 출격 준비'
+      this.menuText.textContent = '두 플레이어가 한 아레나에서 끝까지 살아남으세요.'
+    } else {
+      this.menuTitle.textContent = '춘식이 미사일 회피'
+      this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
+    }
     this.resultPanel.hidden = true
     this.startButton.textContent = '시작'
     this.menu.classList.remove('is-hidden')
@@ -2348,6 +2407,122 @@ class ChunsikDodgeGame {
     }
     this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this.targetCameraFov, 1 - Math.exp(-delta * 3.8))
     this.camera.updateProjectionMatrix()
+  }
+
+  private setupOnlineUi(): void {
+    this.onlineCreateBtn.addEventListener('click', () => {
+      void this.startOnlineHost()
+    })
+    this.onlineJoinBtn.addEventListener('click', () => {
+      const id = this.onlineRoomIdInput.value.trim().toLowerCase()
+      if (!id) {
+        this.setOnlineStatus('방 ID를 입력해주세요', 'error')
+        return
+      }
+      void this.startOnlineGuest(id)
+    })
+    this.onlineRoomIdInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        this.onlineJoinBtn.click()
+      }
+    })
+    this.onlineCopyBtn.addEventListener('click', () => {
+      const roomId = this.onlineRoomIdLabel.textContent ?? ''
+      if (!roomId) return
+      void navigator.clipboard?.writeText(roomId).then(
+        () => this.setOnlineStatus(`방 ID 복사됨: ${roomId}`, 'ok'),
+        () => this.setOnlineStatus('복사 실패 — 직접 선택해 복사해주세요', 'error'),
+      )
+    })
+  }
+
+  private async startOnlineHost(): Promise<void> {
+    this.setOnlineButtonsBusy(true)
+    this.setOnlineStatus('시그널 서버에 접속 중…')
+    this.onlineRoomIdRow.hidden = true
+    this.onlineRoomIdLabel.textContent = ''
+    const net = await this.enterOnlineMode('host', {
+      onRoomCreated: (roomId) => {
+        this.onlineRoomIdLabel.textContent = roomId
+        this.onlineRoomIdRow.hidden = false
+        this.setOnlineStatus('친구가 들어올 때까지 대기 중…')
+      },
+      onChannelOpen: () => {
+        const roomId = this.onlineRoomIdLabel.textContent ?? ''
+        this.setOnlineStatus(`연결됨 — 게임 시작`, 'ok')
+        if (roomId) this.startOnlineGame(roomId)
+      },
+      onChannelClose: () => {
+        this.setOnlineStatus('상대 연결이 끊어졌습니다', 'error')
+        this.handleOnlineDisconnected()
+      },
+      onError: (reason, detail) => {
+        this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
+        this.handleOnlineDisconnected()
+      },
+    })
+    net.connectAsHost()
+  }
+
+  private async startOnlineGuest(roomId: string): Promise<void> {
+    this.setOnlineButtonsBusy(true)
+    this.setOnlineStatus(`방 ${roomId}에 입장 중…`)
+    this.onlineRoomIdRow.hidden = true
+    this.onlineRoomIdLabel.textContent = ''
+    const net = await this.enterOnlineMode('guest', {
+      onRoomJoined: () => {
+        this.setOnlineStatus('연결 협상 중…')
+      },
+      onChannelOpen: () => {
+        this.setOnlineStatus('연결됨 — 게임 시작', 'ok')
+        this.startOnlineGame(roomId)
+      },
+      onChannelClose: () => {
+        this.setOnlineStatus('상대 연결이 끊어졌습니다', 'error')
+        this.handleOnlineDisconnected()
+      },
+      onError: (reason, detail) => {
+        this.setOnlineStatus(`오류: ${this.formatOnlineError(reason, detail)}`, 'error')
+        this.handleOnlineDisconnected()
+      },
+    })
+    net.connectAsGuest(roomId)
+  }
+
+  private setOnlineStatus(message: string, kind: 'info' | 'ok' | 'error' = 'info'): void {
+    this.onlineStatus.textContent = message
+    this.onlineStatus.classList.toggle('is-error', kind === 'error')
+    this.onlineStatus.classList.toggle('is-ok', kind === 'ok')
+  }
+
+  private setOnlineButtonsBusy(busy: boolean): void {
+    this.onlineCreateBtn.disabled = busy
+    this.onlineJoinBtn.disabled = busy
+    this.onlineRoomIdInput.disabled = busy
+  }
+
+  private handleOnlineDisconnected(): void {
+    this.setOnlineButtonsBusy(false)
+    this.onlineRoomIdRow.hidden = true
+    this.onlineRoomIdLabel.textContent = ''
+    if (this.state === 'playing') {
+      this.resetToReady()
+    }
+  }
+
+  private formatOnlineError(reason: string, detail?: unknown): string {
+    switch (reason) {
+      case 'no-room': return '존재하지 않는 방입니다'
+      case 'room-full': return '이미 가득 찬 방입니다'
+      case 'not-in-room': return '방 정보가 없습니다'
+      case 'room-gone': return '방이 종료되었습니다'
+      case 'ws-closed': return '시그널 서버 연결이 끊겼습니다'
+      case 'ws-error': return '시그널 서버 접속 실패'
+      case 'bad-json': return '잘못된 메시지'
+      case 'channel-error': return `P2P 채널 오류 (${String(detail ?? '')})`
+      default: return reason
+    }
   }
 
   async enterOnlineMode(role: OnlineRole, events: OnlineNetEvents = {}): Promise<OnlineNet> {

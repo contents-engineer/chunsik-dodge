@@ -516,6 +516,148 @@ body:not(.mode-versus) .ability-timer--p2 {
   box-shadow: 0 6px 14px rgba(60, 144, 229, 0.18);
 }
 
+.online-picker {
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid rgba(34, 76, 72, 0.12);
+  border-radius: 8px;
+  background: rgba(237, 247, 242, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.online-picker[hidden] {
+  display: none;
+}
+
+.online-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.online-action {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(31, 104, 107, 0.92);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, opacity 140ms ease;
+}
+
+.online-action:hover:not(:disabled) {
+  background: rgba(31, 104, 107, 1);
+}
+
+.online-action:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.online-room-id-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(34, 76, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.online-room-id-row[hidden] {
+  display: none;
+}
+
+.online-room-id-label {
+  color: #62716f;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.online-room-id {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  color: #173b3d;
+  letter-spacing: 0.04em;
+}
+
+.online-mini-btn {
+  padding: 6px 10px;
+  border: 1px solid rgba(34, 76, 72, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #234643;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.online-mini-btn:hover {
+  background: rgba(232, 251, 247, 0.96);
+}
+
+.online-join-label {
+  color: #62716f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.online-join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.online-room-id-input {
+  flex: 1;
+  padding: 9px 11px;
+  border: 1px solid rgba(34, 76, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #173b3d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.online-room-id-input:focus {
+  outline: 2px solid rgba(31, 104, 107, 0.5);
+  outline-offset: 1px;
+}
+
+.online-join-row .online-action {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0 16px;
+}
+
+.online-status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #496561;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.online-status.is-error {
+  background: rgba(231, 96, 96, 0.16);
+  color: #8a2c2c;
+}
+
+.online-status.is-ok {
+  background: rgba(60, 144, 96, 0.16);
+  color: #1a5230;
+}
+
 .mode-picker {
   display: flex;
   width: 100%;
