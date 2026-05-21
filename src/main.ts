@@ -35,7 +35,10 @@ import {
   pickMissileKind,
 } from './difficulty'
 import { createMissileMesh, orientObjectToVelocity } from './missile-mesh'
-import { gameRandom, gameRandomInt, gameRandomSpread } from './rng'
+import { gameRandom, gameRandomInt, gameRandomSpread, setRngSeed, clearRngSeed } from './rng'
+import { OnlineNet, type OnlineRole, type OnlineNetEvents } from './net/online-net'
+import { NEUTRAL_INPUT, type PlayerInput } from './net/input-packing'
+import { SYNC_DIVISOR, BUFFER_LENGTH } from './net/input-queue'
 import type {
   ActionName,
   BurstParticle,
@@ -145,6 +148,11 @@ class ChunsikDodgeGame {
   private spawnTimer = 0
   private pendingSpawns: { at: number; kind: MissileKind }[] = []
   private simAccumulator = 0
+  private online: OnlineNet | null = null
+  private syncCounter = 0
+  private peerAbilityWasDown = false
+  private localAbilityWasDown = false
+  private abilityPressedPending = false
   private shakeAmount = 0
   private currentPhaseIndex = -1
   private phaseLabelClearAt = 0
@@ -471,15 +479,17 @@ class ChunsikDodgeGame {
       this.updateRunButtonState()
       if (event.code === 'Space') {
         event.preventDefault()
-        this.tryAbility(this.players[0])
+        if (!this.online) this.tryAbility(this.players[0])
       }
       if (event.code === 'Enter' || event.code === 'NumpadEnter') {
-        if (this.state === 'playing' && this.mode === 'versus') {
+        if (this.state === 'playing' && this.mode === 'versus' && !this.online) {
           this.tryAbility(this.players[1])
         } else if (this.state !== 'playing') {
           this.startGame()
         }
       }
+      if (event.code === 'Digit1' || event.code === 'Numpad1') this.setMobileCameraMode('arena')
+      if (event.code === 'Digit2' || event.code === 'Numpad2') this.setMobileCameraMode('chunsik')
     })
     window.addEventListener('keyup', (event) => {
       this.keys.delete(event.code)
@@ -499,7 +509,13 @@ class ChunsikDodgeGame {
       this.setMobileCameraMode(button.dataset.cameraMode === 'chunsik' ? 'chunsik' : 'arena')
       this.audio.playSfx(ASSETS.audio.uiClick, 0.28)
     })
-    this.rollButton.addEventListener('click', () => this.tryAbility(this.players[0]))
+    this.rollButton.addEventListener('click', () => {
+      if (this.online) {
+        this.abilityPressedPending = true
+        return
+      }
+      this.tryAbility(this.players[0])
+    })
     this.runButton.addEventListener('pointerdown', (event) => {
       event.preventDefault()
       this.runButton.setPointerCapture(event.pointerId)
@@ -727,6 +743,13 @@ class ChunsikDodgeGame {
       const player = this.createPlayerSlot(1, SOLO_BINDINGS, this.soloCharacter)
       this.players = [player]
       await this.loadCharacterForPlayer(player)
+    } else if (this.mode === 'online') {
+      const onlineP1 = CHARACTERS[0]!
+      const onlineP2 = CHARACTERS[1] ?? CHARACTERS[0]!
+      const p1 = this.createPlayerSlot(1, P1_BINDINGS, onlineP1)
+      const p2 = this.createPlayerSlot(2, P2_BINDINGS, onlineP2)
+      this.players = [p1, p2]
+      await Promise.all([this.loadCharacterForPlayer(p1), this.loadCharacterForPlayer(p2)])
     } else {
       const p1 = this.createPlayerSlot(1, P1_BINDINGS, this.versusP1Character)
       const p2 = this.createPlayerSlot(2, P2_BINDINGS, this.versusP2Character)
@@ -788,6 +811,7 @@ class ChunsikDodgeGame {
       this.versusP2Character = this.pickInitialP2Character()
       localStorage.setItem(STORAGE_KEYS.characterP2, this.versusP2Character.id)
     }
+    this.setMobileCameraMode(mode === 'solo' ? 'chunsik' : 'arena')
     this.updateModePicker()
     this.updateMapPicker()
     this.updateModeChrome()
@@ -1230,7 +1254,7 @@ class ChunsikDodgeGame {
     this.updateRollButtonState()
     this.menu.classList.add('is-hidden')
     this.setStatus(1, '회피 중')
-    if (this.mode === 'versus') this.setStatus(2, '회피 중')
+    if (this.mode === 'versus' || this.online) this.setStatus(2, '회피 중')
 
     this.audio.playBgm()
     this.updateHud()
@@ -1363,7 +1387,7 @@ class ChunsikDodgeGame {
   }
 
   private endGame(): void {
-    if (this.mode === 'versus') this.endGameVersus()
+    if (this.mode === 'versus' || this.online) this.endGameVersus()
     else this.endGameSolo()
   }
 
@@ -1400,6 +1424,7 @@ class ChunsikDodgeGame {
   }
 
   private updateInputForPlayer(player: PlayerRuntime): void {
+    if (this.online) return
     let x = 0
     let y = 0
     if (this.isKeyDown(player.bindings.left)) x -= 1
@@ -1693,7 +1718,7 @@ class ChunsikDodgeGame {
     this.maybeAnnouncePhase()
 
     const wave = this.getWave()
-    const mobile = isMobileViewport()
+    const mobile = this.isSimMobile()
     const interval = getSpawnInterval(this.elapsed, wave, mobile)
     if (this.spawnTimer >= interval) {
       this.spawnTimer = 0
@@ -1734,7 +1759,7 @@ class ChunsikDodgeGame {
     if (isInitial) return
     const label = PHASES[index].label
     this.setStatus(1, `페이즈: ${label}`)
-    if (this.mode === 'versus') this.setStatus(2, `페이즈: ${label}`)
+    if (this.mode === 'versus' || this.online) this.setStatus(2, `페이즈: ${label}`)
     this.phaseLabelClearAt = this.elapsed + 2.2
     this.shakeAmount = Math.max(this.shakeAmount, 0.45)
   }
@@ -1798,7 +1823,7 @@ class ChunsikDodgeGame {
     direction.normalize()
 
     const phaseBoost = PHASES[getPhaseIndex(this.elapsed)].missileSpeedBoost
-    const speedMult = isMobileViewport() ? MOBILE_TUNING.missileSpeedMult : 1
+    const speedMult = this.isSimMobile() ? MOBILE_TUNING.missileSpeedMult : 1
     const baseSpeed = 4.5 + Math.min(5.5, this.elapsed * 0.08) + gameRandom() * 0.8 + phaseBoost
     const kindSpeedMult = kind === 'big' ? 0.55 : kind === 'homing' ? 0.78 : 1
     const speed = baseSpeed * speedMult * kindSpeedMult
@@ -2151,12 +2176,14 @@ class ChunsikDodgeGame {
   }
 
   private updateCamera(delta: number): void {
-    const player = this.players[0]?.group?.position ?? new THREE.Vector3()
+    const cameraTargetIndex = this.online?.role === 'guest' ? 1 : 0
+    const player = this.players[cameraTargetIndex]?.group?.position ?? new THREE.Vector3()
     const mobileArenaView = window.innerWidth < 720
-    const mobileChunsikView = mobileArenaView && this.mobileCameraMode === 'chunsik' && this.mode === 'solo'
+    const followingSelf = this.mode === 'solo' || !!this.online
+    const mobileChunsikView = mobileArenaView && this.mobileCameraMode === 'chunsik' && followingSelf
 
     if (mobileChunsikView) {
-      const input = this.players[0]?.input ?? new THREE.Vector2()
+      const input = this.players[cameraTargetIndex]?.input ?? new THREE.Vector2()
       this.mobileChunsikCameraPanTarget.set(
         THREE.MathUtils.clamp(player.x * 0.34 + input.x * 0.72, -3.4, 3.4),
         THREE.MathUtils.clamp(player.z * 0.1 + input.y * 0.28, -0.95, 0.95),
@@ -2247,7 +2274,11 @@ class ChunsikDodgeGame {
     const step = ChunsikDodgeGame.SIMULATION_STEP
     let stepsRemaining = ChunsikDodgeGame.MAX_SIM_STEPS_PER_FRAME
     while (this.simAccumulator >= step && stepsRemaining > 0) {
-      this.simulateStep(step)
+      if (this.online) {
+        if (!this.tryOnlineStep(step)) break
+      } else {
+        this.simulateStep(step)
+      }
       this.simAccumulator -= step
       stepsRemaining--
     }
@@ -2297,7 +2328,7 @@ class ChunsikDodgeGame {
   }
 
   private getPlayerRadius(): number {
-    return isMobileViewport() ? MOBILE_TUNING.playerRadius : this.arena.playerRadius
+    return this.isSimMobile() ? MOBILE_TUNING.playerRadius : this.arena.playerRadius
   }
 
   private updateCameraProjection(immediate: boolean): void {
@@ -2318,6 +2349,106 @@ class ChunsikDodgeGame {
     this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this.targetCameraFov, 1 - Math.exp(-delta * 3.8))
     this.camera.updateProjectionMatrix()
   }
+
+  async enterOnlineMode(role: OnlineRole, events: OnlineNetEvents = {}): Promise<OnlineNet> {
+    this.exitOnlineMode()
+    const fixedP1 = CHARACTERS[0]
+    const fixedP2 = CHARACTERS[1] ?? CHARACTERS[0]
+    if (fixedP1) this.versusP1Character = fixedP1
+    if (fixedP2) this.versusP2Character = fixedP2
+    this.setMobileCameraMode('arena')
+    await this.setMode('online')
+    await this.createPlayersForMode()
+    this.resetToReady()
+    this.online = new OnlineNet(role, events)
+    return this.online
+  }
+
+  exitOnlineMode(): void {
+    if (!this.online) return
+    this.online.close()
+    this.online = null
+    this.syncCounter = 0
+    this.peerAbilityWasDown = false
+    this.localAbilityWasDown = false
+    clearRngSeed()
+  }
+
+  startOnlineGame(roomId: string): void {
+    if (!this.online) return
+    setRngSeed(roomId)
+    this.syncCounter = 0
+    this.peerAbilityWasDown = false
+    this.localAbilityWasDown = false
+    this.online.local.reset()
+    this.online.peer.reset()
+    this.startGame()
+  }
+
+  private isSimMobile(): boolean {
+    if (this.online) return false
+    return isMobileViewport()
+  }
+
+  private pollLocalInput(): PlayerInput {
+    let x: -1 | 0 | 1 = 0
+    let y: -1 | 0 | 1 = 0
+    if (this.isKeyDown(SOLO_BINDINGS.left)) x = -1
+    else if (this.isKeyDown(SOLO_BINDINGS.right)) x = 1
+    if (this.isKeyDown(SOLO_BINDINGS.up)) y = -1
+    else if (this.isKeyDown(SOLO_BINDINGS.down)) y = 1
+    if (this.joystick.active) {
+      if (Math.abs(this.joystick.vector.x) > 0.3) x = this.joystick.vector.x > 0 ? 1 : -1
+      if (Math.abs(this.joystick.vector.y) > 0.3) y = this.joystick.vector.y > 0 ? 1 : -1
+    }
+    const player = this.players[0]
+    const runFromButton = !!player && player.runHeld
+    const run = this.isKeyDown(SOLO_BINDINGS.run) || runFromButton
+    const ability = this.isKeyDown(SOLO_BINDINGS.ability) || this.abilityPressedPending
+    this.abilityPressedPending = false
+    return { x, y, run, ability }
+  }
+
+  private tryOnlineStep(dt: number): boolean {
+    if (!this.online) return false
+    if (this.state !== 'playing') return true
+    if (!this.online.isChannelOpen()) return false
+    if (this.players.length < 2) return false
+
+    const lead = this.online.local.peekNextCounter() - this.syncCounter
+    if (lead < BUFFER_LENGTH) {
+      this.online.enqueueLocal(this.pollLocalInput())
+    }
+    this.online.resendLocal()
+
+    if (!this.online.peer.hasNext(this.syncCounter)) return false
+    const localInput = this.online.local.getAt(this.syncCounter)
+    if (!localInput) return false
+    const peerInput = this.online.peer.consume(this.syncCounter)
+
+    const hostPlayer = this.players[0]
+    const guestPlayer = this.players[1]
+    const localPlayer = this.online.role === 'host' ? hostPlayer : guestPlayer
+    const remotePlayer = this.online.role === 'host' ? guestPlayer : hostPlayer
+    this.applyOnlineInputToPlayer(localPlayer, localInput, true)
+    this.applyOnlineInputToPlayer(remotePlayer, peerInput, false)
+
+    this.simulateStep(dt)
+    this.syncCounter = (this.syncCounter + 1) % SYNC_DIVISOR
+    return true
+  }
+
+  private applyOnlineInputToPlayer(player: PlayerRuntime, input: PlayerInput, isLocal: boolean): void {
+    player.input.set(input.x, input.y)
+    if (player.input.lengthSq() > 1) player.input.normalize()
+    player.runHeld = input.run
+    const wasDown = isLocal ? this.localAbilityWasDown : this.peerAbilityWasDown
+    if (input.ability && !wasDown) {
+      this.tryAbility(player)
+    }
+    if (isLocal) this.localAbilityWasDown = input.ability
+    else this.peerAbilityWasDown = input.ability
+  }
 }
 
 const root = document.querySelector<HTMLElement>('#app')
@@ -2329,6 +2460,22 @@ if (!root) {
 const game = new ChunsikDodgeGame(root)
 if (import.meta.env.DEV) {
   ;(window as unknown as { __game: ChunsikDodgeGame }).__game = game
+  void import('./net/dev-helpers').then(({ netHost, netJoin, netClose, netTest, bindGameAdapter }) => {
+    bindGameAdapter(() => ({
+      enterOnlineMode: (role, events) => game.enterOnlineMode(role, events),
+      exitOnlineMode: () => game.exitOnlineMode(),
+      startOnlineGame: (roomId) => game.startOnlineGame(roomId),
+    }))
+    ;(window as unknown as {
+      __net: { host: () => void; join: (id: string) => void; close: () => void; test: () => void }
+    }).__net = {
+      host: netHost,
+      join: netJoin,
+      close: netClose,
+      test: netTest,
+    }
+    console.log('%c[net] helpers ready — __net.host() / __net.join(id) / __net.close() / __net.test()', 'color: #2e7b82')
+  })
   void import('./rng').then(({ setRngSeed, gameRandom, clearRngSeed }) => {
     ;(window as unknown as { __detCheck: () => void }).__detCheck = () => {
       const sample = (seed: string, n: number) => {

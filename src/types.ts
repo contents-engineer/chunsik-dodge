@@ -3,7 +3,7 @@ import type * as THREE from 'three'
 import type { CharacterDefinition } from './assets'
 
 export type GameState = 'ready' | 'playing' | 'gameover'
-export type GameMode = 'solo' | 'versus'
+export type GameMode = 'solo' | 'versus' | 'online'
 export type MapKey = 'normal' | 'extended'
 export type ActionName = 'idle' | 'idle2' | 'walk' | 'run' | 'rolling' | 'surprise'
 export type MobileCameraMode = 'arena' | 'chunsik'
