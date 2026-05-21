@@ -109,6 +109,7 @@ class ChunsikDodgeGame {
   private readonly onlineStatus: HTMLParagraphElement
   private readonly keyboardHelpSolo: HTMLDivElement
   private readonly keyboardHelpVersus: HTMLDivElement
+  private readonly keyboardHelpOnline: HTMLDivElement
   private readonly touchControls: HTMLDivElement
 
   private readonly scene = new THREE.Scene()
@@ -219,6 +220,7 @@ class ChunsikDodgeGame {
     this.onlineStatus = this.getElement('online-status')
     this.keyboardHelpSolo = this.getElement('keyboard-help-solo')
     this.keyboardHelpVersus = this.getElement('keyboard-help-versus')
+    this.keyboardHelpOnline = this.getElement('keyboard-help-online')
     this.touchControls = this.getElement('touch-controls')
   }
 
@@ -440,6 +442,20 @@ class ChunsikDodgeGame {
                   <span>이동 / 달리기 / 능력</span>
                 </div>
               </div>
+            </div>
+            <div id="keyboard-help-online" class="keyboard-help" aria-label="온라인 키보드 조작" hidden>
+              <span class="keyboard-help-title">온라인 키보드 조작</span>
+              <div class="keyboard-help-grid">
+                <span><kbd>WASD</kbd><kbd>방향키</kbd></span>
+                <strong>내 캐릭터 이동</strong>
+                <span><kbd>Shift</kbd></span>
+                <strong>달리기</strong>
+                <span><kbd>Space</kbd></span>
+                <strong>구르기</strong>
+                <span><kbd>1</kbd><kbd>2</kbd></span>
+                <strong>시점 전환</strong>
+              </div>
+              <p class="character-picker-hint">두 컴퓨터 모두 같은 키로 자기 캐릭터를 조작합니다.</p>
             </div>
             <button id="start-button" class="primary-button" type="button">시작</button>
           </section>
@@ -1045,7 +1061,8 @@ class ChunsikDodgeGame {
     this.onlinePicker.hidden = !online
     this.mapPicker.hidden = !versus
     this.keyboardHelpSolo.hidden = !solo
-    this.keyboardHelpVersus.hidden = !twoPlayer
+    this.keyboardHelpVersus.hidden = !versus
+    this.keyboardHelpOnline.hidden = !online
     this.bestPanel.hidden = !solo
     this.p1Panel.hidden = !twoPlayer
     this.p2Panel.hidden = !twoPlayer
@@ -2252,6 +2269,7 @@ class ChunsikDodgeGame {
       this.mobileChunsikCameraPan.set(0, 0)
     }
 
+    const desktopArenaView = !mobileArenaView && followingSelf && this.mobileCameraMode === 'arena'
     let base: THREE.Vector3
     if (this.mode === 'versus') {
       const versusScale = Math.max(this.arena.width / 17, this.arena.depth / 11)
@@ -2262,6 +2280,8 @@ class ChunsikDodgeGame {
       base = mobileChunsikView
         ? new THREE.Vector3(this.mobileChunsikCameraPan.x, 15.6, 16.4 + this.mobileChunsikCameraPan.y)
         : new THREE.Vector3(0, 27.5, 6.6)
+    } else if (desktopArenaView) {
+      base = new THREE.Vector3(0, 14.2, 13.4)
     } else {
       base = new THREE.Vector3(player.x * 0.16, 9.5, 12.2 + player.z * 0.12)
     }
@@ -2272,7 +2292,7 @@ class ChunsikDodgeGame {
     }
 
     this.camera.position.lerp(base, 1 - Math.exp(-delta * (mobileChunsikView ? 3.2 : 4.2)))
-    if (this.mode === 'versus') {
+    if (this.mode === 'versus' || desktopArenaView) {
       this.cameraLookTarget.set(0, 0.4, 0)
     } else {
       this.cameraLookTarget.set(
