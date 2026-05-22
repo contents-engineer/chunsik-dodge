@@ -151,6 +151,7 @@ class ChunsikDodgeGame {
     localStorage.getItem(STORAGE_KEYS.character) ?? DEFAULT_CHARACTER_ID,
   )
   private versusP2Character: CharacterDefinition = this.pickInitialP2Character()
+  private soloPickerRandom = false
   private players: PlayerRuntime[] = []
   private bestScore = Number(localStorage.getItem(STORAGE_KEYS.best) ?? 0)
   private elapsed = 0
@@ -626,20 +627,27 @@ class ChunsikDodgeGame {
       if (randomBtn) {
         const next = pickRandomCharacter()
         this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
-        if (next.id === this.soloCharacter.id) return
-        this.soloCharacter = next
-        localStorage.setItem(STORAGE_KEYS.character, next.id)
+        this.soloPickerRandom = true
+        if (next.id !== this.soloCharacter.id) {
+          this.soloCharacter = next
+          localStorage.setItem(STORAGE_KEYS.character, next.id)
+          void this.applySelectionToPlayers()
+        }
         this.updateCharacterPicker()
-        void this.applySelectionToPlayers()
         return
       }
       const button = target.closest<HTMLButtonElement>('[data-character-id]')
       const characterId = button?.dataset.characterId
-      if (!characterId || characterId === this.soloCharacter.id) return
-      this.soloCharacter = findCharacter(characterId)
-      localStorage.setItem(STORAGE_KEYS.character, this.soloCharacter.id)
+      if (!characterId) return
+      const next = findCharacter(characterId)
+      const sameId = next.id === this.soloCharacter.id
+      this.soloPickerRandom = false
+      if (!sameId) {
+        this.soloCharacter = next
+        localStorage.setItem(STORAGE_KEYS.character, next.id)
+        void this.applySelectionToPlayers()
+      }
       this.updateCharacterPicker()
-      void this.applySelectionToPlayers()
       this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
     })
 
@@ -982,14 +990,14 @@ class ChunsikDodgeGame {
   }
 
   private updateCharacterPicker(): void {
+    const randomActive = this.soloPickerRandom || !this.soloCharacter.pickerVisible
     for (const button of this.soloPicker.querySelectorAll<HTMLButtonElement>('[data-character-id]')) {
-      const active = button.dataset.characterId === this.soloCharacter.id
+      const active = !randomActive && button.dataset.characterId === this.soloCharacter.id
       button.classList.toggle('is-active', active)
       button.setAttribute('aria-checked', String(active))
     }
     const randomBtn = this.soloPicker.querySelector<HTMLButtonElement>('[data-character-random]')
     if (randomBtn) {
-      const randomActive = !this.soloCharacter.pickerVisible
       randomBtn.classList.toggle('is-active', randomActive)
       randomBtn.setAttribute('aria-checked', String(randomActive))
     }
