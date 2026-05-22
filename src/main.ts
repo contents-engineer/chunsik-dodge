@@ -409,6 +409,7 @@ class ChunsikDodgeGame {
                 </div>
               </div>
               <p id="online-status" class="online-status" role="status">방을 만들거나 친구의 방 ID를 입력하세요</p>
+              <p class="character-picker-hint">테스트할 때는 두 탭을 동시에 보이게 띄워주세요 — 비활성 탭은 브라우저가 멈춰서 락스텝이 진행되지 않습니다.</p>
             </div>
             <div id="keyboard-help-solo" class="keyboard-help" aria-label="키보드 조작법">
               <span class="keyboard-help-title">키보드 조작</span>
@@ -494,6 +495,8 @@ class ChunsikDodgeGame {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.04
+    this.renderer.domElement.tabIndex = 0
+    this.renderer.domElement.style.outline = 'none'
     this.canvasHost.appendChild(this.renderer.domElement)
     window.addEventListener('resize', () => this.resize())
     this.resize()
@@ -526,6 +529,12 @@ class ChunsikDodgeGame {
   }
 
   private setupUi(): void {
+    document.addEventListener('visibilitychange', () => {
+      if (!this.online) return
+      if (document.hidden && this.state === 'playing') {
+        console.warn('[net] this tab is hidden — Chrome throttles inactive tabs. Open both tabs side-by-side for lockstep to progress.')
+      }
+    })
     window.addEventListener('keydown', (event) => {
       this.keys.add(event.code)
       this.updateRunButtonState()
@@ -2384,7 +2393,44 @@ class ChunsikDodgeGame {
     this.updateCamera(realDelta)
     this.updateRollButtonState()
     this.updateAbilityTimers()
+    this.updateDiagPanel()
     this.renderer.render(this.scene, this.camera)
+  }
+
+  private diagPanel: HTMLDivElement | null = null
+  private updateDiagPanel(): void {
+    if (!import.meta.env.DEV) return
+    if (!this.online) {
+      if (this.diagPanel) this.diagPanel.style.display = 'none'
+      return
+    }
+    if (!this.diagPanel) {
+      const el = document.createElement('div')
+      el.id = 'diag-panel'
+      el.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:9999;background:rgba(0,0,0,0.72);color:#9af;padding:6px 8px;border-radius:6px;font:11px ui-monospace,monospace;line-height:1.45;pointer-events:none;white-space:pre;max-width:280px'
+      document.body.appendChild(el)
+      this.diagPanel = el
+    }
+    this.diagPanel.style.display = 'block'
+    const p0 = this.players[0]
+    const p1 = this.players[1]
+    const keysList = Array.from(this.keys).slice(0, 6).join(',') || '-'
+    const active = document.activeElement
+    const activeTag = active ? active.tagName + (active.id ? '#' + active.id : '') : '-'
+    const peerItems = (this.online.peer as unknown as { items: Array<{ syncCounter: number }> }).items
+    const peerRange = peerItems.length > 0 ? `${peerItems[0].syncCounter}..${peerItems[peerItems.length - 1].syncCounter}` : '-'
+    const localNext = this.online.local.peekNextCounter()
+    const lead = localNext - this.syncCounter
+    const lines = [
+      `state=${this.state} role=${this.online.role} ch=${this.online.isChannelOpen() ? 'open' : 'closed'} hidden=${document.hidden}`,
+      `sync=${this.syncCounter} localNext=${localNext} lead=${lead}`,
+      `peerQ.len=${peerItems.length} range=${peerRange}`,
+      `keys=${keysList}`,
+      `active=${activeTag}`,
+      `p1.input=(${p0?.input.x.toFixed(2) ?? '-'},${p0?.input.y.toFixed(2) ?? '-'}) pos=(${p0?.group?.position.x.toFixed(2) ?? '-'},${p0?.group?.position.z.toFixed(2) ?? '-'})`,
+      `p2.input=(${p1?.input.x.toFixed(2) ?? '-'},${p1?.input.y.toFixed(2) ?? '-'}) pos=(${p1?.group?.position.x.toFixed(2) ?? '-'},${p1?.group?.position.z.toFixed(2) ?? '-'})`,
+    ]
+    this.diagPanel.textContent = lines.join('\n')
   }
 
   private resize(): void {
@@ -2466,10 +2512,8 @@ class ChunsikDodgeGame {
         this.setOnlineStatus('친구가 들어올 때까지 대기 중…')
       },
       onChannelOpen: () => {
-        const roomId = this.onlineRoomIdLabel.textContent ?? ''
-        this.setOnlineStatus(`연결됨 — 게임 시작`, 'ok')
+        this.setOnlineStatus(`연결됨 — 친구 준비 대기 중…`, 'ok')
         this.sendCharacterPickToPeer()
-        if (roomId) this.startOnlineGame(roomId)
       },
       onChannelClose: () => {
         this.setOnlineStatus('상대 연결이 끊어졌습니다', 'error')
@@ -2584,6 +2628,15 @@ class ChunsikDodgeGame {
     this.online.local.reset()
     this.online.peer.reset()
     this.startGame()
+    this.focusGameSurface()
+  }
+
+  private focusGameSurface(): void {
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active !== document.body) {
+      try { active.blur() } catch {}
+    }
+    try { this.renderer.domElement.focus({ preventScroll: true }) } catch {}
   }
 
   private requestStartGame(): void {
@@ -2637,7 +2690,9 @@ class ChunsikDodgeGame {
     this.updateModeChrome()
     if (this.state !== 'playing') {
       const roomId = this.online.getRoomId()
-      if (roomId) this.startOnlineGame(roomId)
+      if (!roomId) return
+      this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
+      this.startOnlineGame(roomId)
     }
   }
 
@@ -2716,6 +2771,52 @@ if (!root) {
 const game = new ChunsikDodgeGame(root)
 if (import.meta.env.DEV) {
   ;(window as unknown as { __game: ChunsikDodgeGame }).__game = game
+  ;(window as unknown as { __diag: () => unknown }).__diag = () => {
+    const g = game as unknown as {
+      mode: string
+      state: string
+      keys: Set<string>
+      players: Array<{
+        id: number
+        input: { x: number; y: number }
+        runHeld: boolean
+        alive: boolean
+        group?: { position: { x: number; z: number } }
+      }>
+      online: {
+        role: string
+        isChannelOpen: () => boolean
+        local: { peekNextCounter: () => number }
+        peer: { items: unknown[] }
+      } | null
+      syncCounter: number
+    }
+    const fmt = (n: number) => Number(n.toFixed(2))
+    return {
+      mode: g.mode,
+      state: g.state,
+      keys: Array.from(g.keys),
+      activeElement: document.activeElement?.tagName + (document.activeElement?.id ? '#' + document.activeElement.id : ''),
+      hidden: document.hidden,
+      players: g.players.map((p) => ({
+        id: p.id,
+        alive: p.alive,
+        input: { x: fmt(p.input.x), y: fmt(p.input.y) },
+        runHeld: p.runHeld,
+        pos: p.group ? { x: fmt(p.group.position.x), z: fmt(p.group.position.z) } : null,
+      })),
+      online: g.online
+        ? {
+            role: g.online.role,
+            channelOpen: g.online.isChannelOpen(),
+            syncCounter: g.syncCounter,
+            localNext: g.online.local.peekNextCounter(),
+            peerQueueLen: g.online.peer.items.length,
+          }
+        : null,
+    }
+  }
+  console.log('%c[diag] __diag() 콘솔에서 호출하면 키/상태/위치/큐 한번에 확인', 'color: #2e7b82')
   void import('./net/dev-helpers').then(({ netHost, netJoin, netClose, netTest, bindGameAdapter }) => {
     bindGameAdapter(() => ({
       enterOnlineMode: (role, events) => game.enterOnlineMode(role, events),
