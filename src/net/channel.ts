@@ -1,8 +1,19 @@
 import type { Signaling } from './signaling'
 
+// TURN credential은 운영 시 metered.ca 무료 계정 발급(월 50GB)으로 교체 권장.
+// 현재 공개 credential은 동작이 보장되지 않으며 트래픽 제한이 있습니다.
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ]
 
 const DATA_CHANNEL_LABEL = 'chunsik_p2p'
