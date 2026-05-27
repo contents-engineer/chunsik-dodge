@@ -8,6 +8,7 @@ export const MESSAGE_KIND = {
   INPUT: 0,
   RESTART_ROUND: 1,
   CHARACTER_PICK: 2,
+  READY: 3,
 } as const
 export type MessageKind = (typeof MESSAGE_KIND)[keyof typeof MESSAGE_KIND]
 

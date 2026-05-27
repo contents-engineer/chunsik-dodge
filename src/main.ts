@@ -107,6 +107,14 @@ class ChunsikDodgeGame {
   private readonly onlineRoomIdLabel: HTMLElement
   private readonly onlineRoomIdInput: HTMLInputElement
   private readonly onlineStatus: HTMLParagraphElement
+  private readonly onlineLobby: HTMLDivElement
+  private readonly onlineLobbyRoomId: HTMLElement
+  private readonly onlineLobbyCopyBtn: HTMLButtonElement
+  private readonly onlineLobbySelfGrid: HTMLDivElement
+  private readonly onlineLobbyPeerSwatch: HTMLElement
+  private readonly onlineLobbyPeerName: HTMLElement
+  private readonly onlineLobbyPeerStatus: HTMLElement
+  private readonly onlineLobbyLeaveBtn: HTMLButtonElement
   private readonly keyboardHelpSolo: HTMLDivElement
   private readonly keyboardHelpVersus: HTMLDivElement
   private readonly keyboardHelpOnline: HTMLDivElement
@@ -159,6 +167,9 @@ class ChunsikDodgeGame {
   private pendingSpawns: { at: number; kind: MissileKind }[] = []
   private simAccumulator = 0
   private online: OnlineNet | null = null
+  private onlinePhase: 'menu' | 'lobby' = 'menu'
+  private localReady = false
+  private peerReady = false
   private syncCounter = 0
   private peerAbilityWasDown = false
   private localAbilityWasDown = false
@@ -219,6 +230,14 @@ class ChunsikDodgeGame {
     this.onlineRoomIdLabel = this.getElement('online-room-id')
     this.onlineRoomIdInput = this.getElement('online-room-id-input')
     this.onlineStatus = this.getElement('online-status')
+    this.onlineLobby = this.getElement('online-lobby')
+    this.onlineLobbyRoomId = this.getElement('online-lobby-room-id')
+    this.onlineLobbyCopyBtn = this.getElement('online-lobby-copy')
+    this.onlineLobbySelfGrid = this.getElement('online-lobby-self-grid')
+    this.onlineLobbyPeerSwatch = this.getElement('online-lobby-peer-swatch')
+    this.onlineLobbyPeerName = this.getElement('online-lobby-peer-name')
+    this.onlineLobbyPeerStatus = this.getElement('online-lobby-peer-status')
+    this.onlineLobbyLeaveBtn = this.getElement('online-lobby-leave')
     this.keyboardHelpSolo = this.getElement('keyboard-help-solo')
     this.keyboardHelpVersus = this.getElement('keyboard-help-versus')
     this.keyboardHelpOnline = this.getElement('keyboard-help-online')
@@ -425,6 +444,44 @@ class ChunsikDodgeGame {
               </div>
               <p id="online-status" class="online-status" role="status">방을 만들거나 친구의 방 ID를 입력하세요</p>
               <p class="character-picker-hint">테스트할 때는 두 탭을 동시에 보이게 띄워주세요 — 비활성 탭은 브라우저가 멈춰서 락스텝이 진행되지 않습니다.</p>
+            </div>
+            <div id="online-lobby" class="online-lobby" hidden>
+              <div class="online-lobby-room">
+                <span class="online-lobby-room-label">방 ID</span>
+                <code id="online-lobby-room-id" class="online-room-id"></code>
+                <button id="online-lobby-copy" class="online-mini-btn" type="button">복사</button>
+              </div>
+              <div class="online-lobby-slots">
+                <div class="online-lobby-slot online-lobby-slot--self">
+                  <span class="online-lobby-slot-label">내 캐릭터</span>
+                  <div id="online-lobby-self-grid" class="online-lobby-grid">
+                    ${CHARACTERS.filter((character) => character.pickerVisible).map(
+                      (character) => `
+                      <button
+                        class="character-option"
+                        type="button"
+                        data-lobby-character-id="${character.id}"
+                        role="radio"
+                        aria-checked="false"
+                        aria-label="${character.name}"
+                      >
+                        <span class="character-swatch" style="background:${character.swatch};"></span>
+                        <span class="character-name">${character.name}</span>
+                      </button>
+                    `,
+                    ).join('')}
+                  </div>
+                </div>
+                <div class="online-lobby-slot online-lobby-slot--peer">
+                  <span class="online-lobby-slot-label">상대 캐릭터</span>
+                  <div class="online-lobby-peer-card">
+                    <span id="online-lobby-peer-swatch" class="character-swatch online-lobby-peer-swatch"></span>
+                    <span id="online-lobby-peer-name" class="character-name">선택 대기 중…</span>
+                  </div>
+                  <span id="online-lobby-peer-status" class="online-lobby-peer-status">아직 준비 안 됨</span>
+                </div>
+              </div>
+              <button id="online-lobby-leave" class="online-mini-btn online-lobby-leave" type="button">방 나가기</button>
             </div>
             <div id="keyboard-help-solo" class="keyboard-help" aria-label="키보드 조작법">
               <span class="keyboard-help-title">키보드 조작</span>
@@ -668,7 +725,6 @@ class ChunsikDodgeGame {
     this.versusPicker.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-versus-id]')
       if (!button) return
-      if (this.online && this.online.role === 'guest') return
       const characterId = button.dataset.versusId
       const slot = button.dataset.playerSlot === '2' ? 2 : 1
       if (!characterId) return
@@ -1134,33 +1190,57 @@ class ChunsikDodgeGame {
     const versus = this.mode === 'versus'
     const online = this.mode === 'online'
     const twoPlayer = versus || online
+    const onlineMenu = online && this.onlinePhase === 'menu'
+    const onlineLobby = online && this.onlinePhase === 'lobby'
     this.soloPicker.hidden = !solo
-    this.versusPicker.hidden = !versus && !online
-    this.onlinePicker.hidden = !online
+    this.versusPicker.hidden = !versus
+    this.onlinePicker.hidden = !onlineMenu
+    this.onlineLobby.hidden = !onlineLobby
     this.mapPicker.hidden = !versus
     this.keyboardHelpSolo.hidden = !solo
     this.keyboardHelpVersus.hidden = !versus
-    this.keyboardHelpOnline.hidden = !online
+    this.keyboardHelpOnline.hidden = !onlineLobby
     this.bestPanel.hidden = !solo
     this.p1Panel.hidden = !twoPlayer
     this.p2Panel.hidden = !twoPlayer
     this.statusValueP2.hidden = !twoPlayer
     this.touchControls.classList.toggle('is-hidden', !solo)
-    if (online) this.menuTitle.textContent = '온라인 대결전 출격 준비'
-    else if (versus) this.menuTitle.textContent = '대결전 출격 준비'
-    else this.menuTitle.textContent = '춘식이 미사일 회피'
-    if (versus) {
+    this.startButton.hidden = onlineMenu
+    if (onlineLobby) {
+      this.menuTitle.textContent = '온라인 대결전 로비'
+      this.menuText.textContent = '캐릭터를 선택하고 준비를 누르세요. 둘 다 준비되면 시작합니다.'
+    } else if (onlineMenu) {
+      this.menuTitle.textContent = '온라인 대결전'
+      this.menuText.textContent = '방을 만들거나 친구의 방 ID로 입장해 함께 회피하세요.'
+    } else if (versus) {
+      this.menuTitle.textContent = '대결전 출격 준비'
       this.menuText.textContent = '두 플레이어가 한 아레나에서 끝까지 살아남으세요.'
+    } else {
+      this.menuTitle.textContent = '춘식이 미사일 회피'
+      this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
+    }
+    if (versus) {
       this.p1Name.textContent = this.versusP1Character.name
       this.p2Name.textContent = this.versusP2Character.name
     } else if (online) {
-      this.menuText.textContent = '방을 만들거나 친구의 방 ID로 입장해 함께 회피하세요.'
-      this.p1Name.textContent = (CHARACTERS[0]?.name ?? '1P')
-      this.p2Name.textContent = (CHARACTERS[1]?.name ?? '2P')
-    } else {
-      this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
+      this.p1Name.textContent = this.versusP1Character.name
+      this.p2Name.textContent = this.versusP2Character.name
     }
     document.body.classList.toggle('mode-versus', twoPlayer)
+    this.updateStartButtonLabel()
+  }
+
+  private updateStartButtonLabel(): void {
+    if (this.mode !== 'online' || this.onlinePhase !== 'lobby') return
+    if (this.localReady && this.peerReady) {
+      this.startButton.textContent = '시작 중…'
+    } else if (this.localReady) {
+      this.startButton.textContent = '준비됨 (취소)'
+    } else if (this.peerReady) {
+      this.startButton.textContent = '상대 준비됨 — 내 준비'
+    } else {
+      this.startButton.textContent = '준비'
+    }
   }
 
   private async buildGroundAndGrid(): Promise<void> {
@@ -1433,19 +1513,11 @@ class ChunsikDodgeGame {
     this.positionPlayersForStart()
     this.setRunButtonHeld(false)
     this.updateRollButtonState()
-    if (this.mode === 'online') {
-      this.menuTitle.textContent = '온라인 대결전 출격 준비'
-      this.menuText.textContent = '방을 만들거나 친구의 방 ID로 입장해 함께 회피하세요.'
-    } else if (this.mode === 'versus') {
-      this.menuTitle.textContent = '대결전 출격 준비'
-      this.menuText.textContent = '두 플레이어가 한 아레나에서 끝까지 살아남으세요.'
-    } else {
-      this.menuTitle.textContent = '춘식이 미사일 회피'
-      this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
-    }
     this.resultPanel.hidden = true
     this.startButton.textContent = '시작'
     this.menu.classList.remove('is-hidden')
+    this.updateModeChrome()
+    this.updateLobbyView()
     this.setStatus(1, '대기 중')
     this.setStatus(2, '대기 중')
     this.updateHud()
@@ -1560,6 +1632,11 @@ class ChunsikDodgeGame {
       if (this.state !== 'gameover') return
       this.resultPanel.hidden = false
       this.menu.classList.remove('is-hidden')
+      if (this.mode === 'online' && this.onlinePhase === 'lobby') {
+        this.localReady = false
+        this.peerReady = false
+        this.updateLobbyView()
+      }
     }, durationSec * 1000)
   }
 
@@ -2277,16 +2354,26 @@ class ChunsikDodgeGame {
     this.soundButton.classList.toggle('is-active', this.audio.isEnabled())
   }
 
+  private cameraStorageKey(): string {
+    return `${STORAGE_KEYS.camera}-${this.mode}`
+  }
+
+  private cameraDefaultForMode(): MobileCameraMode {
+    return this.mode === 'solo' ? 'chunsik' : 'arena'
+  }
+
   private readMobileCameraMode(): MobileCameraMode {
-    return localStorage.getItem(STORAGE_KEYS.camera) === 'chunsik' ? 'chunsik' : 'arena'
+    const stored = localStorage.getItem(this.cameraStorageKey())
+    if (stored === 'chunsik' || stored === 'arena') return stored
+    return this.cameraDefaultForMode()
   }
 
   private setMobileCameraMode(mode: MobileCameraMode): void {
-    if (this.mobileCameraMode === mode) return
+    const changed = this.mobileCameraMode !== mode
     this.mobileCameraMode = mode
-    localStorage.setItem(STORAGE_KEYS.camera, mode)
+    localStorage.setItem(this.cameraStorageKey(), mode)
     this.updateCameraToggle()
-    this.updateCameraProjection(false)
+    if (changed) this.updateCameraProjection(false)
   }
 
   private updateCameraToggle(): void {
@@ -2499,6 +2586,9 @@ class ChunsikDodgeGame {
       `peerQ.len=${peerItems.length} range=${peerRange}`,
       `keys=${keysList}`,
       `active=${activeTag}`,
+      `versusP1=${this.versusP1Character.id} versusP2=${this.versusP2Character.id}`,
+      `p1.char=${p0?.character.id ?? '-'} p2.char=${p1?.character.id ?? '-'}`,
+      `ctrl sent=${this.online.ctrlSentCount}(${this.online.lastCtrlSent ?? '-'}) rcv=${this.online.ctrlRcvCount}(${this.online.lastCtrlRcv ?? '-'})`,
       `p1.input=(${p0?.input.x.toFixed(2) ?? '-'},${p0?.input.y.toFixed(2) ?? '-'}) pos=(${p0?.group?.position.x.toFixed(2) ?? '-'},${p0?.group?.position.z.toFixed(2) ?? '-'})`,
       `p2.input=(${p1?.input.x.toFixed(2) ?? '-'},${p1?.input.y.toFixed(2) ?? '-'}) pos=(${p1?.group?.position.x.toFixed(2) ?? '-'},${p1?.group?.position.z.toFixed(2) ?? '-'})`,
     ]
@@ -2570,6 +2660,118 @@ class ChunsikDodgeGame {
         () => this.setOnlineStatus('복사 실패 — 직접 선택해 복사해주세요', 'error'),
       )
     })
+    this.onlineLobbyCopyBtn.addEventListener('click', () => {
+      const roomId = this.onlineLobbyRoomId.textContent ?? ''
+      if (!roomId) return
+      void navigator.clipboard?.writeText(roomId)
+    })
+    this.onlineLobbySelfGrid.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-lobby-character-id]')
+      if (!button) return
+      const id = button.dataset.lobbyCharacterId
+      if (!id) return
+      this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
+      this.setOwnLobbyCharacter(findCharacter(id))
+    })
+    this.onlineLobbyLeaveBtn.addEventListener('click', () => {
+      this.audio.playSfx(ASSETS.audio.uiClick, 0.3)
+      this.leaveOnlineLobby()
+    })
+  }
+
+  private getOwnSlot(): 1 | 2 {
+    if (!this.online) return 1
+    return this.online.role === 'host' ? 1 : 2
+  }
+
+  private getOwnCharacter(): CharacterDefinition {
+    return this.getOwnSlot() === 1 ? this.versusP1Character : this.versusP2Character
+  }
+
+  private getPeerCharacter(): CharacterDefinition {
+    return this.getOwnSlot() === 1 ? this.versusP2Character : this.versusP1Character
+  }
+
+  private async setOwnLobbyCharacter(next: CharacterDefinition): Promise<void> {
+    if (!this.online) return
+    const slot = this.getOwnSlot()
+    const current = slot === 1 ? this.versusP1Character : this.versusP2Character
+    if (current.id === next.id) return
+    if (slot === 1) {
+      this.versusP1Character = next
+    } else {
+      this.versusP2Character = next
+    }
+    localStorage.setItem(STORAGE_KEYS.characterOnline, next.id)
+    if (this.localReady) {
+      this.localReady = false
+      this.sendReadyToPeer()
+    }
+    await this.applySelectionToPlayers()
+    this.sendCharacterPickToPeer()
+    this.updateLobbyView()
+  }
+
+  private updateLobbyView(): void {
+    if (this.mode !== 'online' || this.onlinePhase !== 'lobby') return
+    const ownChar = this.getOwnCharacter()
+    for (const button of this.onlineLobbySelfGrid.querySelectorAll<HTMLButtonElement>('[data-lobby-character-id]')) {
+      const active = button.dataset.lobbyCharacterId === ownChar.id
+      button.classList.toggle('is-active', active)
+      button.setAttribute('aria-checked', String(active))
+    }
+    const peerChar = this.getPeerCharacter()
+    this.onlineLobbyPeerSwatch.style.background = peerChar.swatch
+    this.onlineLobbyPeerName.textContent = peerChar.name
+    this.onlineLobbyPeerStatus.textContent = this.peerReady ? '준비 완료' : '아직 준비 안 됨'
+    this.onlineLobbyPeerStatus.classList.toggle('is-ready', this.peerReady)
+    this.updateStartButtonLabel()
+  }
+
+  private enterLobbyPhase(): void {
+    this.onlinePhase = 'lobby'
+    this.localReady = false
+    this.peerReady = false
+    const roomId = this.online?.getRoomId() ?? ''
+    this.onlineLobbyRoomId.textContent = roomId
+    this.updateModeChrome()
+    this.updateLobbyView()
+  }
+
+  private leaveOnlineLobby(): void {
+    this.exitOnlineMode()
+    this.setOnlineButtonsBusy(false)
+    this.onlineRoomIdRow.hidden = true
+    this.onlineRoomIdLabel.textContent = ''
+    this.setOnlineStatus('방을 만들거나 친구의 방 ID를 입력하세요')
+    this.updateModeChrome()
+  }
+
+  private toggleLocalReady(): void {
+    if (!this.online || !this.online.isChannelOpen()) return
+    if (this.onlinePhase !== 'lobby') return
+    this.localReady = !this.localReady
+    this.sendReadyToPeer()
+    this.updateLobbyView()
+    this.maybeStartFromLobby()
+  }
+
+  private sendReadyToPeer(): void {
+    if (!this.online) return
+    const slot = this.getOwnSlot()
+    const charIdx = Math.max(0, CHARACTERS.findIndex((c) => c.id === this.getOwnCharacter().id))
+    this.online.sendControl(MESSAGE_KIND.READY, new Uint8Array([this.localReady ? 1 : 0, slot, charIdx]))
+  }
+
+  private maybeStartFromLobby(): void {
+    if (!this.online || !this.online.isChannelOpen()) return
+    if (this.onlinePhase !== 'lobby') return
+    if (!this.localReady || !this.peerReady) return
+    if (this.online.role !== 'host') return
+    const roomId = this.online.getRoomId()
+    if (!roomId) return
+    this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
+    this.startOnlineGame(roomId)
   }
 
   private async startOnlineHost(): Promise<void> {
@@ -2584,7 +2786,7 @@ class ChunsikDodgeGame {
         this.setOnlineStatus('친구가 들어올 때까지 대기 중…')
       },
       onChannelOpen: () => {
-        this.setOnlineStatus(`연결됨 — 친구 준비 대기 중…`, 'ok')
+        this.enterLobbyPhase()
         this.sendCharacterPickToPeer()
       },
       onChannelClose: () => {
@@ -2610,7 +2812,8 @@ class ChunsikDodgeGame {
         this.setOnlineStatus('연결 협상 중…')
       },
       onChannelOpen: () => {
-        this.setOnlineStatus('연결됨 — 호스트의 캐릭터 정보 대기 중…', 'ok')
+        this.enterLobbyPhase()
+        this.sendCharacterPickToPeer()
       },
       onChannelClose: () => {
         this.setOnlineStatus('상대 연결이 끊어졌습니다', 'error')
@@ -2641,8 +2844,11 @@ class ChunsikDodgeGame {
     this.setOnlineButtonsBusy(false)
     this.onlineRoomIdRow.hidden = true
     this.onlineRoomIdLabel.textContent = ''
+    this.exitOnlineMode()
     if (this.state === 'playing') {
       this.resetToReady()
+    } else {
+      this.updateModeChrome()
     }
   }
 
@@ -2662,18 +2868,17 @@ class ChunsikDodgeGame {
 
   async enterOnlineMode(role: OnlineRole, events: OnlineNetEvents = {}): Promise<OnlineNet> {
     this.exitOnlineMode()
-    if (role === 'guest') {
-      const defP1 = CHARACTERS[0]
-      const defP2 = CHARACTERS[1] ?? CHARACTERS[0]
-      if (defP1) this.versusP1Character = defP1
-      if (defP2) this.versusP2Character = defP2
+    const own = this.storedPickable(STORAGE_KEYS.characterOnline, CHARACTERS[0]!)
+    if (role === 'host') {
+      this.versusP1Character = own
+      this.versusP2Character = CHARACTERS[1] ?? CHARACTERS[0]!
     } else {
-      if (this.versusP1Character.id === this.versusP2Character.id) {
-        const alt = CHARACTERS.find((c) => c.pickerVisible && c.id !== this.versusP1Character.id)
-        if (alt) this.versusP2Character = alt
-      }
+      this.versusP2Character = own
+      this.versusP1Character = CHARACTERS[0]!
     }
-    this.setMobileCameraMode('arena')
+    this.onlinePhase = 'menu'
+    this.localReady = false
+    this.peerReady = false
     await this.setMode('online')
     await this.createPlayersForMode()
     this.resetToReady()
@@ -2682,6 +2887,9 @@ class ChunsikDodgeGame {
   }
 
   exitOnlineMode(): void {
+    this.onlinePhase = 'menu'
+    this.localReady = false
+    this.peerReady = false
     if (!this.online) return
     this.online.close()
     this.online = null
@@ -2697,10 +2905,24 @@ class ChunsikDodgeGame {
     this.syncCounter = 0
     this.peerAbilityWasDown = false
     this.localAbilityWasDown = false
+    this.localReady = false
+    this.peerReady = false
     this.online.local.reset()
     this.online.peer.reset()
+    void this.ensureOnlineCharactersApplied()
     this.startGame()
     this.focusGameSurface()
+  }
+
+  private async ensureOnlineCharactersApplied(): Promise<void> {
+    const p1 = this.players[0]
+    const p2 = this.players[1]
+    if (p1 && p1.character.id !== this.versusP1Character.id) {
+      await this.swapCharacterForPlayer(p1, this.versusP1Character)
+    }
+    if (p2 && p2.character.id !== this.versusP2Character.id) {
+      await this.swapCharacterForPlayer(p2, this.versusP2Character)
+    }
   }
 
   private focusGameSurface(): void {
@@ -2714,13 +2936,10 @@ class ChunsikDodgeGame {
   private requestStartGame(): void {
     if (this.state === 'playing') return
     if (this.online && this.online.isChannelOpen()) {
-      const roomId = this.online.getRoomId()
-      if (!roomId) return
-      if (this.online.role === 'host') this.sendCharacterPickToPeer()
-      this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
-      this.startOnlineGame(roomId)
+      if (this.onlinePhase === 'lobby') this.toggleLocalReady()
       return
     }
+    if (this.mode === 'online') return
     this.startGame()
   }
 
@@ -2737,35 +2956,61 @@ class ChunsikDodgeGame {
       void this.applyPeerCharacterPick(payload)
       return
     }
+    if (kind === MESSAGE_KIND.READY) {
+      void this.applyPeerReady(payload)
+      return
+    }
   }
 
   private sendCharacterPickToPeer(): void {
     if (!this.online) return
-    if (this.online.role !== 'host') return
-    const p1Idx = CHARACTERS.findIndex((c) => c.id === this.versusP1Character.id)
-    const p2Idx = CHARACTERS.findIndex((c) => c.id === this.versusP2Character.id)
-    const payload = new Uint8Array([Math.max(0, p1Idx), Math.max(0, p2Idx)])
-    this.online.sendControl(MESSAGE_KIND.CHARACTER_PICK, payload)
+    const slot = this.getOwnSlot()
+    const character = this.getOwnCharacter()
+    const charIdx = Math.max(0, CHARACTERS.findIndex((c) => c.id === character.id))
+    this.online.sendControl(MESSAGE_KIND.CHARACTER_PICK, new Uint8Array([slot, charIdx]))
+  }
+
+  private async applyPeerCharacter(slot: number, charIdx: number): Promise<boolean> {
+    const char = CHARACTERS[charIdx]
+    if (!char) return false
+    let changed = false
+    if (slot === 1 && this.versusP1Character.id !== char.id) {
+      this.versusP1Character = char
+      changed = true
+    } else if (slot === 2 && this.versusP2Character.id !== char.id) {
+      this.versusP2Character = char
+      changed = true
+    }
+    if (!changed) return false
+    const player = this.players[slot - 1]
+    if (player) {
+      await this.swapCharacterForPlayer(player, char)
+    } else {
+      await this.createPlayersForMode()
+    }
+    return true
   }
 
   private async applyPeerCharacterPick(payload?: Uint8Array): Promise<void> {
-    if (!this.online || this.online.role !== 'guest') return
+    if (!this.online) return
     if (!payload || payload.byteLength < 2) return
-    const p1 = CHARACTERS[payload[0]] ?? CHARACTERS[0]
-    const p2 = CHARACTERS[payload[1]] ?? CHARACTERS[1] ?? CHARACTERS[0]
-    if (!p1 || !p2) return
-    const changed = this.versusP1Character.id !== p1.id || this.versusP2Character.id !== p2.id
-    this.versusP1Character = p1
-    this.versusP2Character = p2
-    if (changed) await this.createPlayersForMode()
-    this.updateCharacterPicker()
+    const changed = await this.applyPeerCharacter(payload[0], payload[1])
+    if (changed && this.peerReady) this.peerReady = false
+    this.updateLobbyView()
     this.updateModeChrome()
-    if (this.state !== 'playing') {
-      const roomId = this.online.getRoomId()
-      if (!roomId) return
-      this.online.sendControl(MESSAGE_KIND.RESTART_ROUND)
-      this.startOnlineGame(roomId)
+  }
+
+  private async applyPeerReady(payload?: Uint8Array): Promise<void> {
+    if (!this.online) return
+    if (this.onlinePhase !== 'lobby') return
+    if (!payload || payload.byteLength < 1) return
+    const ready = payload[0] === 1
+    if (ready && payload.byteLength >= 3) {
+      await this.applyPeerCharacter(payload[1], payload[2])
     }
+    this.peerReady = ready
+    this.updateLobbyView()
+    this.maybeStartFromLobby()
   }
 
   private isSimMobile(): boolean {

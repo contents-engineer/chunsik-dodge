@@ -28,6 +28,10 @@ export class OnlineNet {
   private channelOpen = false
   private roomId: string | null = null
   private readonly events: OnlineNetEvents
+  ctrlSentCount = 0
+  ctrlRcvCount = 0
+  lastCtrlSent: MessageKind | null = null
+  lastCtrlRcv: MessageKind | null = null
 
   constructor(role: OnlineRole, events: OnlineNetEvents = {}) {
     this.role = role
@@ -112,6 +116,8 @@ export class OnlineNet {
     view.set(payload, 1)
     const channel = this.channel
     channel.send(buf)
+    this.ctrlSentCount++
+    this.lastCtrlSent = kind
     let sent = 1
     const id = window.setInterval(() => {
       if (!this.channelOpen || !this.channel) {
@@ -132,6 +138,8 @@ export class OnlineNet {
       this.peer.ingestSerialized(data)
       return
     }
+    this.ctrlRcvCount++
+    this.lastCtrlRcv = kind
     const payload = view.slice(1)
     this.events.onControl?.(kind, payload)
   }

@@ -658,6 +658,116 @@ body:not(.mode-versus) .ability-timer--p2 {
   color: #1a5230;
 }
 
+.online-lobby {
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid rgba(34, 76, 72, 0.12);
+  border-radius: 8px;
+  background: rgba(237, 247, 242, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.online-lobby[hidden] {
+  display: none;
+}
+
+.online-lobby-room {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(34, 76, 72, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.online-lobby-room-label {
+  color: #62716f;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.online-lobby-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.online-lobby-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(34, 76, 72, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.online-lobby-slot-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #234643;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.online-lobby-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.online-lobby-grid .character-option {
+  padding: 8px;
+}
+
+.online-lobby-peer-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(34, 76, 72, 0.16);
+  min-height: 56px;
+}
+
+.online-lobby-peer-swatch {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(34, 76, 72, 0.12);
+}
+
+.online-lobby-peer-status {
+  font-size: 11px;
+  color: #8a6a2c;
+  background: rgba(255, 199, 96, 0.22);
+  padding: 4px 8px;
+  border-radius: 999px;
+  align-self: flex-start;
+}
+
+.online-lobby-peer-status.is-ready {
+  color: #1a5230;
+  background: rgba(60, 144, 96, 0.22);
+}
+
+.online-lobby-leave {
+  align-self: flex-end;
+}
+
+@media (max-width: 520px) {
+  .online-lobby-slots {
+    grid-template-columns: 1fr;
+  }
+}
+
 .mode-picker {
   display: flex;
   width: 100%;
