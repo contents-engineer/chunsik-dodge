@@ -145,10 +145,10 @@ class ChunsikDodgeGame {
   private sunLight?: THREE.DirectionalLight
   private gameoverRevealTimer: number | null = null
   private soloCharacter: CharacterDefinition = findCharacter(
-    localStorage.getItem(STORAGE_KEYS.character) ?? DEFAULT_CHARACTER_ID,
+    localStorage.getItem(STORAGE_KEYS.characterSolo) ?? DEFAULT_CHARACTER_ID,
   )
   private versusP1Character: CharacterDefinition = findCharacter(
-    localStorage.getItem(STORAGE_KEYS.character) ?? DEFAULT_CHARACTER_ID,
+    localStorage.getItem(STORAGE_KEYS.characterVersusP1) ?? DEFAULT_CHARACTER_ID,
   )
   private versusP2Character: CharacterDefinition = this.pickInitialP2Character()
   private soloPickerRandom = false
@@ -226,15 +226,29 @@ class ChunsikDodgeGame {
   }
 
   private pickInitialP2Character(): CharacterDefinition {
-    const stored = localStorage.getItem(STORAGE_KEYS.characterP2)
-    if (stored) {
-      const candidate = findCharacter(stored)
-      if (candidate.id !== this.versusP1Character.id) return candidate
+    const raw = localStorage.getItem(STORAGE_KEYS.characterVersusP2)
+    if (raw) {
+      const candidate = findCharacter(raw)
+      if (candidate.pickerVisible && candidate.id !== this.versusP1Character.id) return candidate
     }
-    const fallback = CHARACTERS.find(
-      (character) => character.pickerVisible && character.id !== this.versusP1Character.id,
-    )
-    return fallback ?? CHARACTERS[0]!
+    return this.firstPickableOtherThan(this.versusP1Character)
+  }
+
+  private firstPickableOtherThan(other: CharacterDefinition): CharacterDefinition {
+    return CHARACTERS.find((c) => c.pickerVisible && c.id !== other.id) ?? CHARACTERS[0]!
+  }
+
+  private storedPickable(key: string, fallback: CharacterDefinition): CharacterDefinition {
+    const c = findCharacter(localStorage.getItem(key))
+    return c.pickerVisible ? c : fallback
+  }
+
+  private loadVersusCharacters(): void {
+    this.versusP1Character = this.storedPickable(STORAGE_KEYS.characterVersusP1, CHARACTERS[0]!)
+    const p2 = this.storedPickable(STORAGE_KEYS.characterVersusP2, CHARACTERS[1] ?? CHARACTERS[0]!)
+    this.versusP2Character = p2.id === this.versusP1Character.id
+      ? this.firstPickableOtherThan(this.versusP1Character)
+      : p2
   }
 
   async start(): Promise<void> {
@@ -630,7 +644,7 @@ class ChunsikDodgeGame {
         this.soloPickerRandom = true
         if (next.id !== this.soloCharacter.id) {
           this.soloCharacter = next
-          localStorage.setItem(STORAGE_KEYS.character, next.id)
+          localStorage.setItem(STORAGE_KEYS.characterSolo, next.id)
           void this.applySelectionToPlayers()
         }
         this.updateCharacterPicker()
@@ -644,7 +658,7 @@ class ChunsikDodgeGame {
       this.soloPickerRandom = false
       if (!sameId) {
         this.soloCharacter = next
-        localStorage.setItem(STORAGE_KEYS.character, next.id)
+        localStorage.setItem(STORAGE_KEYS.characterSolo, next.id)
         void this.applySelectionToPlayers()
       }
       this.updateCharacterPicker()
@@ -663,25 +677,22 @@ class ChunsikDodgeGame {
         if (this.versusP1Character.id === next.id) return
         if (this.versusP2Character.id === next.id) {
           this.versusP2Character = this.versusP1Character
-          localStorage.setItem(STORAGE_KEYS.characterP2, this.versusP2Character.id)
+          localStorage.setItem(STORAGE_KEYS.characterVersusP2, this.versusP2Character.id)
         }
         this.versusP1Character = next
-        localStorage.setItem(STORAGE_KEYS.character, next.id)
+        localStorage.setItem(STORAGE_KEYS.characterVersusP1, next.id)
       } else {
         if (this.versusP2Character.id === next.id) return
         if (this.versusP1Character.id === next.id) {
           this.versusP1Character = this.versusP2Character
-          localStorage.setItem(STORAGE_KEYS.character, this.versusP1Character.id)
+          localStorage.setItem(STORAGE_KEYS.characterVersusP1, this.versusP1Character.id)
         }
         this.versusP2Character = next
-        localStorage.setItem(STORAGE_KEYS.characterP2, next.id)
+        localStorage.setItem(STORAGE_KEYS.characterVersusP2, next.id)
       }
       this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
       this.updateCharacterPicker()
       void this.applySelectionToPlayers()
-      if (this.online && this.online.role === 'host') {
-        this.sendCharacterPickToPeer()
-      }
     })
 
     this.updateCameraToggle()
@@ -933,11 +944,11 @@ class ChunsikDodgeGame {
     if (this.mode === mode) return
     this.mode = mode
     localStorage.setItem(STORAGE_KEYS.mode, mode)
-    if (mode === 'versus' && this.versusP1Character.id === this.versusP2Character.id) {
-      this.versusP2Character = this.pickInitialP2Character()
-      localStorage.setItem(STORAGE_KEYS.characterP2, this.versusP2Character.id)
+    if (mode === 'versus') {
+      this.loadVersusCharacters()
+      localStorage.setItem(STORAGE_KEYS.characterVersusP2, this.versusP2Character.id)
     }
-    this.setMobileCameraMode(mode === 'solo' ? 'chunsik' : 'arena')
+    this.setMobileCameraMode(this.readMobileCameraMode())
     this.updateModePicker()
     this.updateMapPicker()
     this.updateModeChrome()
