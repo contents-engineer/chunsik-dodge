@@ -801,11 +801,10 @@ class ChunsikDodgeGame {
     canvas.height = skin.naturalHeight
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('2D canvas context unavailable')
-    if (hue !== 0 || saturation !== 1 || brightness !== 1) {
-      ctx.filter = `hue-rotate(${hue}deg) saturate(${saturation}) brightness(${brightness})`
-    }
     ctx.drawImage(skin, 0, 0)
-    ctx.filter = 'none'
+    if (hue !== 0 || saturation !== 1 || brightness !== 1) {
+      this.recolorCanvas(ctx, canvas.width, canvas.height, hue, saturation, brightness)
+    }
     ctx.drawImage(details, 0, 0)
     const texture = new THREE.CanvasTexture(canvas)
     texture.flipY = false
@@ -815,6 +814,60 @@ class ChunsikDodgeGame {
     texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
     texture.needsUpdate = true
     return texture
+  }
+
+  // Safari는 canvas ctx.filter(hue-rotate 등)를 적용하지 못해, CSS filter 사양과
+  // 동일한 색행렬을 픽셀 단위로 직접 곱해 모든 브라우저에서 같은 재색칠을 만든다.
+  private recolorCanvas(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    hueDeg: number,
+    saturation: number,
+    brightness: number,
+  ): void {
+    const image = ctx.getImageData(0, 0, width, height)
+    const data = image.data
+    const m = this.buildColorMatrix(hueDeg, saturation, brightness)
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) continue
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      data[i] = this.clamp255(m[0] * r + m[1] * g + m[2] * b)
+      data[i + 1] = this.clamp255(m[3] * r + m[4] * g + m[5] * b)
+      data[i + 2] = this.clamp255(m[6] * r + m[7] * g + m[8] * b)
+    }
+    ctx.putImageData(image, 0, 0)
+  }
+
+  private clamp255(v: number): number {
+    return v < 0 ? 0 : v > 255 ? 255 : v
+  }
+
+  private buildColorMatrix(hueDeg: number, saturation: number, brightness: number): number[] {
+    const rad = (hueDeg * Math.PI) / 180
+    const c = Math.cos(rad)
+    const s = Math.sin(rad)
+    const hueM = [
+      0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+      0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283,
+      0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072,
+    ]
+    const satM = [
+      0.213 + 0.787 * saturation, 0.715 - 0.715 * saturation, 0.072 - 0.072 * saturation,
+      0.213 - 0.213 * saturation, 0.715 + 0.285 * saturation, 0.072 - 0.072 * saturation,
+      0.213 - 0.213 * saturation, 0.715 - 0.715 * saturation, 0.072 + 0.928 * saturation,
+    ]
+    const out = new Array<number>(9)
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        let sum = 0
+        for (let k = 0; k < 3; k++) sum += satM[row * 3 + k] * hueM[k * 3 + col]
+        out[row * 3 + col] = sum * brightness
+      }
+    }
+    return out
   }
 
   private async createPlayersForMode(): Promise<void> {
