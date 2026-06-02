@@ -601,12 +601,6 @@ class ChunsikDodgeGame {
   }
 
   private setupUi(): void {
-    document.addEventListener('visibilitychange', () => {
-      if (!this.online) return
-      if (document.hidden && this.state === 'playing') {
-        console.warn('[net] this tab is hidden — Chrome throttles inactive tabs. Open both tabs side-by-side for lockstep to progress.')
-      }
-    })
     window.addEventListener('keydown', (event) => {
       this.keys.add(event.code)
       this.updateRunButtonState()
@@ -2552,47 +2546,7 @@ class ChunsikDodgeGame {
     this.updateCamera(realDelta)
     this.updateRollButtonState()
     this.updateAbilityTimers()
-    this.updateDiagPanel()
     this.renderer.render(this.scene, this.camera)
-  }
-
-  private diagPanel: HTMLDivElement | null = null
-  private updateDiagPanel(): void {
-    if (!import.meta.env.DEV) return
-    if (!this.online) {
-      if (this.diagPanel) this.diagPanel.style.display = 'none'
-      return
-    }
-    if (!this.diagPanel) {
-      const el = document.createElement('div')
-      el.id = 'diag-panel'
-      el.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:9999;background:rgba(0,0,0,0.72);color:#9af;padding:6px 8px;border-radius:6px;font:11px ui-monospace,monospace;line-height:1.45;pointer-events:none;white-space:pre;max-width:280px'
-      document.body.appendChild(el)
-      this.diagPanel = el
-    }
-    this.diagPanel.style.display = 'block'
-    const p0 = this.players[0]
-    const p1 = this.players[1]
-    const keysList = Array.from(this.keys).slice(0, 6).join(',') || '-'
-    const active = document.activeElement
-    const activeTag = active ? active.tagName + (active.id ? '#' + active.id : '') : '-'
-    const peerItems = (this.online.peer as unknown as { items: Array<{ syncCounter: number }> }).items
-    const peerRange = peerItems.length > 0 ? `${peerItems[0].syncCounter}..${peerItems[peerItems.length - 1].syncCounter}` : '-'
-    const localNext = this.online.local.peekNextCounter()
-    const lead = localNext - this.syncCounter
-    const lines = [
-      `state=${this.state} role=${this.online.role} ch=${this.online.isChannelOpen() ? 'open' : 'closed'} hidden=${document.hidden}`,
-      `sync=${this.syncCounter} localNext=${localNext} lead=${lead}`,
-      `peerQ.len=${peerItems.length} range=${peerRange}`,
-      `keys=${keysList}`,
-      `active=${activeTag}`,
-      `versusP1=${this.versusP1Character.id} versusP2=${this.versusP2Character.id}`,
-      `p1.char=${p0?.character.id ?? '-'} p2.char=${p1?.character.id ?? '-'}`,
-      `ctrl sent=${this.online.ctrlSentCount}(${this.online.lastCtrlSent ?? '-'}) rcv=${this.online.ctrlRcvCount}(${this.online.lastCtrlRcv ?? '-'})`,
-      `p1.input=(${p0?.input.x.toFixed(2) ?? '-'},${p0?.input.y.toFixed(2) ?? '-'}) pos=(${p0?.group?.position.x.toFixed(2) ?? '-'},${p0?.group?.position.z.toFixed(2) ?? '-'})`,
-      `p2.input=(${p1?.input.x.toFixed(2) ?? '-'},${p1?.input.y.toFixed(2) ?? '-'}) pos=(${p1?.group?.position.x.toFixed(2) ?? '-'},${p1?.group?.position.z.toFixed(2) ?? '-'})`,
-    ]
-    this.diagPanel.textContent = lines.join('\n')
   }
 
   private resize(): void {
@@ -3133,7 +3087,6 @@ if (import.meta.env.DEV) {
         : null,
     }
   }
-  console.log('%c[diag] __diag() 콘솔에서 호출하면 키/상태/위치/큐 한번에 확인', 'color: #2e7b82')
   void import('./net/dev-helpers').then(({ netHost, netJoin, netClose, netTest, bindGameAdapter }) => {
     bindGameAdapter(() => ({
       enterOnlineMode: (role, events) => game.enterOnlineMode(role, events),
@@ -3148,7 +3101,6 @@ if (import.meta.env.DEV) {
       close: netClose,
       test: netTest,
     }
-    console.log('%c[net] helpers ready — __net.host() / __net.join(id) / __net.close() / __net.test()', 'color: #2e7b82')
   })
   void import('./rng').then(({ setRngSeed, gameRandom, clearRngSeed }) => {
     ;(window as unknown as { __detCheck: () => void }).__detCheck = () => {
