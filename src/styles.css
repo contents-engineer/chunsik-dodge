@@ -384,8 +384,11 @@ body:not(.mode-versus) .ability-timer--p2 {
   inset: 0;
   z-index: 20;
   display: grid;
-  place-items: center;
+  place-items: safe center;
   padding: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: rgba(18, 34, 34, 0.28);
   transition: opacity 180ms ease, visibility 180ms ease;
 }
@@ -693,7 +696,7 @@ body:not(.mode-versus) .ability-timer--p2 {
 
 .online-lobby-slots {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -760,12 +763,6 @@ body:not(.mode-versus) .ability-timer--p2 {
 
 .online-lobby-leave {
   align-self: flex-end;
-}
-
-@media (max-width: 520px) {
-  .online-lobby-slots {
-    grid-template-columns: 1fr;
-  }
 }
 
 .mode-picker {
@@ -1185,6 +1182,10 @@ body.mode-versus .menu-card h1 {
 
   .menu-card {
     padding: 20px;
+  }
+
+  .mode-option[data-game-mode="versus"] {
+    display: none;
   }
 
   .menu-card h1 {

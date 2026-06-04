@@ -1198,7 +1198,7 @@ class ChunsikDodgeGame {
     this.p1Panel.hidden = !twoPlayer
     this.p2Panel.hidden = !twoPlayer
     this.statusValueP2.hidden = !twoPlayer
-    this.touchControls.classList.toggle('is-hidden', !solo)
+    this.touchControls.classList.toggle('is-hidden', !solo && !online)
     this.startButton.hidden = onlineMenu
     if (onlineLobby) {
       this.menuTitle.textContent = '온라인 대결전 로비'
