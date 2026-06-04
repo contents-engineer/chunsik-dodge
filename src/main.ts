@@ -37,7 +37,7 @@ import {
 import { createMissileMesh, orientObjectToVelocity } from './missile-mesh'
 import { gameRandom, gameRandomInt, gameRandomSpread, setRngSeed, clearRngSeed } from './rng'
 import { OnlineNet, type OnlineRole, type OnlineNetEvents } from './net/online-net'
-import { NEUTRAL_INPUT, type PlayerInput } from './net/input-packing'
+import type { PlayerInput } from './net/input-packing'
 import { SYNC_DIVISOR, BUFFER_LENGTH, MESSAGE_KIND, type MessageKind } from './net/input-queue'
 import type {
   ActionName,
