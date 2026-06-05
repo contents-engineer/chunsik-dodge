@@ -78,7 +78,7 @@ export const P1_BINDINGS: PlayerBindings = {
   left: ['KeyA'],
   right: ['KeyD'],
   run: ['ShiftLeft'],
-  ability: ['Space'],
+  ability: ['ControlLeft'],
 }
 
 export const P2_BINDINGS: PlayerBindings = {
@@ -87,7 +87,7 @@ export const P2_BINDINGS: PlayerBindings = {
   left: ['ArrowLeft'],
   right: ['ArrowRight'],
   run: ['ShiftRight'],
-  ability: ['Enter', 'NumpadEnter'],
+  ability: ['ControlRight'],
 }
 
 export const SOLO_BINDINGS: PlayerBindings = {

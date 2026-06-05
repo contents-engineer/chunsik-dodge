@@ -327,8 +327,8 @@ class ChunsikDodgeGame {
         <div class="status-pill status-pill--p1" id="status-value">대기 중</div>
         <div class="status-pill status-pill--p2" id="status-value-p2" hidden>대기 중</div>
         <div id="camera-toggle" class="camera-toggle" role="group" aria-label="모바일 카메라">
-          <button class="camera-option" type="button" data-camera-mode="arena" aria-pressed="true">전체</button>
-          <button class="camera-option" type="button" data-camera-mode="chunsik" aria-pressed="false">춘식</button>
+          <button class="camera-option" type="button" data-camera-mode="arena" aria-pressed="true">멀리</button>
+          <button class="camera-option" type="button" data-camera-mode="chunsik" aria-pressed="false">가까이</button>
         </div>
         <div id="loading" class="loading">
           <img src="${assetPath(ASSETS.images.menuChunsik)}" alt="" />
@@ -503,13 +503,13 @@ class ChunsikDodgeGame {
                   <strong class="versus-keys-row-label">1P</strong>
                   <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
                   <span><kbd>L Shift</kbd></span>
-                  <span><kbd>Space</kbd></span>
+                  <span><kbd>L Ctrl</kbd></span>
                 </div>
                 <div class="versus-keys-row">
                   <strong class="versus-keys-row-label">2P</strong>
                   <span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span>
                   <span><kbd>R Shift</kbd></span>
-                  <span><kbd>Enter</kbd></span>
+                  <span><kbd>R Ctrl</kbd></span>
                 </div>
                 <div class="versus-keys-legend">
                   <span>이동 / 달리기 / 능력</span>
@@ -606,12 +606,22 @@ class ChunsikDodgeGame {
       this.updateRunButtonState()
       if (event.code === 'Space') {
         event.preventDefault()
-        if (!this.online) this.tryAbility(this.players[0])
+        if (!this.online && this.mode !== 'versus') this.tryAbility(this.players[0])
+      }
+      if (event.code === 'ControlLeft') {
+        if (this.mode === 'versus' && !this.online && this.state === 'playing') {
+          event.preventDefault()
+          this.tryAbility(this.players[0])
+        }
+      }
+      if (event.code === 'ControlRight') {
+        if (this.mode === 'versus' && !this.online && this.state === 'playing') {
+          event.preventDefault()
+          this.tryAbility(this.players[1])
+        }
       }
       if (event.code === 'Enter' || event.code === 'NumpadEnter') {
-        if (this.state === 'playing' && this.mode === 'versus' && !this.online) {
-          this.tryAbility(this.players[1])
-        } else if (this.state !== 'playing') {
+        if (this.state !== 'playing') {
           this.requestStartGame()
         }
       }
@@ -636,7 +646,10 @@ class ChunsikDodgeGame {
       this.setMobileCameraMode(button.dataset.cameraMode === 'chunsik' ? 'chunsik' : 'arena')
       this.audio.playSfx(ASSETS.audio.uiClick, 0.28)
     })
-    this.rollButton.addEventListener('click', () => {
+    this.rollButton.addEventListener('pointerdown', (event) => {
+      if (this.rollButton.disabled) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      event.preventDefault()
       if (this.online) {
         this.abilityPressedPending = true
         return
