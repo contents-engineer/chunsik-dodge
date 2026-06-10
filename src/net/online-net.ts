@@ -3,7 +3,8 @@ import { Signaling, type SignalErrorReason } from './signaling'
 import { LocalInputQueue, MESSAGE_KIND, PeerInputQueue, type MessageKind } from './input-queue'
 import type { PlayerInput } from './input-packing'
 
-export const SIGNAL_URL = 'wss://chunsik-dodge.fly.dev'
+// 로컬 개발 시 .env.local에 VITE_SIGNAL_URL=ws://localhost:8787 식으로 덮어쓸 수 있다
+export const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL ?? 'wss://chunsik-dodge.fly.dev'
 
 export type OnlineRole = 'host' | 'guest'
 

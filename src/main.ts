@@ -34,11 +34,11 @@ import {
   getSpawnInterval,
   pickMissileKind,
 } from './difficulty'
-import { createMissileMesh, orientObjectToVelocity } from './missile-mesh'
-import { gameRandom, gameRandomInt, gameRandomSpread, setRngSeed, clearRngSeed } from './rng'
+import { MissileSystem, type MissileSimContext } from './missile-system'
+import { gameRandom, setRngSeed, clearRngSeed } from './rng'
 import { OnlineNet, type OnlineRole, type OnlineNetEvents } from './net/online-net'
 import type { PlayerInput } from './net/input-packing'
-import { SYNC_DIVISOR, BUFFER_LENGTH, MESSAGE_KIND, type MessageKind } from './net/input-queue'
+import { SYNC_DIVISOR, BUFFER_LENGTH, MESSAGE_KIND, syncDiff, type MessageKind } from './net/input-queue'
 import type {
   ActionName,
   BurstParticle,
@@ -46,18 +46,14 @@ import type {
   GameState,
   JoystickState,
   MapKey,
-  Missile,
   MissileKind,
   MobileCameraMode,
   PlayerBindings,
   PlayerId,
   PlayerRuntime,
 } from './types'
-
-function renderTemplate(target: HTMLElement, html: string): void {
-  const fragment = document.createRange().createContextualFragment(html)
-  target.replaceChildren(fragment)
-}
+import { HudView } from './ui/hud'
+import { getElement, renderShellHtml, renderTemplate } from './ui/shell'
 
 class ChunsikDodgeGame {
   private readonly root: HTMLElement
@@ -71,30 +67,12 @@ class ChunsikDodgeGame {
   private readonly finalTime: HTMLElement
   private readonly finalTimeLabel: HTMLElement
   private readonly startButton: HTMLButtonElement
-  private readonly timeValue: HTMLElement
-  private readonly bestPanel: HTMLDivElement
-  private readonly bestValue: HTMLElement
-  private readonly waveValue: HTMLElement
-  private readonly p1Panel: HTMLDivElement
-  private readonly p2Panel: HTMLDivElement
-  private readonly p1Name: HTMLElement
-  private readonly p2Name: HTMLElement
-  private readonly statusValue: HTMLElement
-  private readonly statusValueP2: HTMLElement
   private readonly soundButton: HTMLButtonElement
   private readonly resetButton: HTMLButtonElement
   private readonly cameraToggle: HTMLDivElement
-  private readonly rollButton: HTMLButtonElement
-  private readonly rollButtonLabel: HTMLSpanElement
-  private readonly runButton: HTMLButtonElement
   private readonly joystickBase: HTMLDivElement
   private readonly joystickStick: HTMLDivElement
-  private readonly abilityTimer: HTMLDivElement
-  private readonly abilityTimerLabel: HTMLSpanElement
-  private readonly abilityTimerValue: HTMLSpanElement
-  private readonly abilityTimerP2: HTMLDivElement
-  private readonly abilityTimerP2Label: HTMLSpanElement
-  private readonly abilityTimerP2Value: HTMLSpanElement
+  private readonly hud: HudView
   private readonly modePicker: HTMLDivElement
   private readonly mapPicker: HTMLDivElement
   private readonly soloPicker: HTMLDivElement
@@ -132,8 +110,22 @@ class ChunsikDodgeGame {
   private readonly cameraLookCurrent = new THREE.Vector3(0, 0.25, -0.35)
   private readonly mobileChunsikCameraPan = new THREE.Vector2()
   private readonly mobileChunsikCameraPanTarget = new THREE.Vector2()
-  private readonly missiles: Missile[] = []
+  private readonly missileSystem = new MissileSystem(this.scene, {
+    onMissileArmed: () =>
+      this.audio.playSfx(Math.random() > 0.5 ? ASSETS.audio.attackA : ASSETS.audio.attackB, 0.22),
+    onRollCleared: (playerId) => this.handleRollCleared(playerId),
+  })
+  // MissileSystem에 매 호출 전달하는 컨텍스트 — 핫패스라 객체를 재사용한다
+  private readonly missileCtx: MissileSimContext = {
+    arena: MAP_PRESETS.normal,
+    players: [],
+    elapsed: 0,
+    mobile: false,
+    playerRadius: 0,
+    playing: false,
+  }
   private readonly particles: BurstParticle[] = []
+  private readonly particlePool: THREE.Mesh[] = []
   private baseCharacterSkin?: HTMLImageElement
   private baseCharacterDetails?: HTMLImageElement
   private readonly joystick: JoystickState = {
@@ -173,6 +165,8 @@ class ChunsikDodgeGame {
   private syncCounter = 0
   private peerAbilityWasDown = false
   private localAbilityWasDown = false
+  private readonly localChecksums = new Map<number, number>()
+  private readonly peerChecksums = new Map<number, number>()
   private abilityPressedPending = false
   private shakeAmount = 0
   private currentPhaseIndex = -1
@@ -183,7 +177,8 @@ class ChunsikDodgeGame {
 
   constructor(root: HTMLElement) {
     this.root = root
-    renderTemplate(this.root, this.renderShell())
+    renderTemplate(this.root, renderShellHtml())
+    this.hud = new HudView(root)
     this.canvasHost = this.getElement('canvas-host')
     this.loading = this.getElement('loading')
     this.loadingMeter = this.getElement('loading-meter')
@@ -194,30 +189,11 @@ class ChunsikDodgeGame {
     this.finalTime = this.getElement('final-time')
     this.finalTimeLabel = this.getElement('final-time-label')
     this.startButton = this.getElement('start-button')
-    this.timeValue = this.getElement('time-value')
-    this.bestPanel = this.getElement('best-panel')
-    this.bestValue = this.getElement('best-value')
-    this.waveValue = this.getElement('wave-value')
-    this.p1Panel = this.getElement('p1-panel')
-    this.p2Panel = this.getElement('p2-panel')
-    this.p1Name = this.getElement('p1-name')
-    this.p2Name = this.getElement('p2-name')
-    this.statusValue = this.getElement('status-value')
-    this.statusValueP2 = this.getElement('status-value-p2')
     this.soundButton = this.getElement('sound-button')
     this.resetButton = this.getElement('reset-button')
     this.cameraToggle = this.getElement('camera-toggle')
-    this.rollButton = this.getElement('roll-button')
-    this.rollButtonLabel = this.getElement('roll-button-label')
-    this.runButton = this.getElement('run-button')
     this.joystickBase = this.getElement('joystick-base')
     this.joystickStick = this.getElement('joystick-stick')
-    this.abilityTimer = this.getElement('ability-timer')
-    this.abilityTimerLabel = this.getElement('ability-timer-label')
-    this.abilityTimerValue = this.getElement('ability-timer-value')
-    this.abilityTimerP2 = this.getElement('ability-timer-p2')
-    this.abilityTimerP2Label = this.getElement('ability-timer-p2-label')
-    this.abilityTimerP2Value = this.getElement('ability-timer-p2-value')
     this.modePicker = this.getElement('mode-picker')
     this.mapPicker = this.getElement('map-picker')
     this.soloPicker = this.getElement('character-picker')
@@ -277,286 +253,17 @@ class ChunsikDodgeGame {
     this.setupOnlineUi()
     this.updateHud()
     this.updateSoundButton()
+    // 첫 제스처에서 AudioContext 생성 + SFX 사전 디코딩 (preload는 멱등)
+    window.addEventListener('pointerdown', () => this.audio.preload(), { once: true })
+    window.addEventListener('keydown', () => this.audio.preload(), { once: true })
     await this.loadWorld()
     this.loading.classList.add('is-hidden')
     this.animate()
   }
 
-  private renderShell(): string {
-    return `
-      <div class="game-shell">
-        <div id="canvas-host" class="canvas-host"></div>
-        <div id="ability-timer" class="ability-timer ability-timer--p1" aria-hidden="true">
-          <span id="ability-timer-label" class="ability-timer-label">구르기</span>
-          <span id="ability-timer-value" class="ability-timer-value">0.0</span>
-        </div>
-        <div id="ability-timer-p2" class="ability-timer ability-timer--p2" aria-hidden="true">
-          <span id="ability-timer-p2-label" class="ability-timer-label">구르기</span>
-          <span id="ability-timer-p2-value" class="ability-timer-value">0.0</span>
-        </div>
-        <div class="hud hud-top">
-          <section class="score-panel" aria-label="점수">
-            <div id="p1-panel" class="score-panel-cell score-panel-cell--p1" hidden>
-              <span>1P</span>
-              <strong id="p1-name">춘식이</strong>
-            </div>
-            <div>
-              <span>TIME</span>
-              <strong id="time-value">0.00</strong>
-            </div>
-            <div id="best-panel">
-              <span>BEST</span>
-              <strong id="best-value">0.00</strong>
-            </div>
-            <div>
-              <span>WAVE</span>
-              <strong id="wave-value">1</strong>
-            </div>
-            <div id="p2-panel" class="score-panel-cell score-panel-cell--p2" hidden>
-              <span>2P</span>
-              <strong id="p2-name">깜식이</strong>
-            </div>
-          </section>
-          <div class="hud-actions">
-            <button id="sound-button" class="icon-button" type="button" aria-label="사운드"></button>
-            <button id="reset-button" class="icon-button" type="button" aria-label="다시 시작">
-              <img src="${assetPath(ASSETS.images.replay)}" alt="" />
-            </button>
-          </div>
-        </div>
-        <div class="status-pill status-pill--p1" id="status-value">대기 중</div>
-        <div class="status-pill status-pill--p2" id="status-value-p2" hidden>대기 중</div>
-        <div id="camera-toggle" class="camera-toggle" role="group" aria-label="모바일 카메라">
-          <button class="camera-option" type="button" data-camera-mode="arena" aria-pressed="true">멀리</button>
-          <button class="camera-option" type="button" data-camera-mode="chunsik" aria-pressed="false">가까이</button>
-        </div>
-        <div id="loading" class="loading">
-          <img src="${assetPath(ASSETS.images.menuChunsik)}" alt="" />
-          <strong>춘식이 출격 준비</strong>
-          <div class="loading-bar"><div id="loading-meter"></div></div>
-        </div>
-        <div id="menu" class="menu-overlay">
-          <section class="menu-card" aria-label="게임 메뉴">
-            <img class="menu-character" src="${assetPath(ASSETS.images.menuChunsik)}" alt="" />
-            <h1 id="menu-title">춘식이 미사일 회피</h1>
-            <p id="menu-text">날아오는 궤적 사이를 빠져나가 오래 버티세요.</p>
-            <div id="result-panel" class="result-panel" hidden>
-              <span id="final-time-label" class="result-label">기록</span>
-              <strong id="final-time">0.00초</strong>
-            </div>
-            <div id="mode-picker" class="mode-picker" role="radiogroup" aria-label="게임 모드">
-              <button class="mode-option" type="button" data-game-mode="solo" role="radio" aria-checked="true">개인전</button>
-              <button class="mode-option" type="button" data-game-mode="versus" role="radio" aria-checked="false">대결전</button>
-              <button class="mode-option" type="button" data-game-mode="online" role="radio" aria-checked="false">온라인</button>
-            </div>
-            <div id="map-picker" class="mode-picker map-picker" role="radiogroup" aria-label="맵 선택" hidden>
-              <button class="mode-option" type="button" data-map-key="normal" role="radio" aria-checked="true">일반맵</button>
-              <button class="mode-option" type="button" data-map-key="extended" role="radio" aria-checked="false">확장맵</button>
-            </div>
-            <div id="character-picker" class="character-picker" role="radiogroup" aria-label="캐릭터 선택">
-              <span class="character-picker-title">캐릭터</span>
-              <div class="character-picker-grid">
-                ${CHARACTERS.filter((character) => character.pickerVisible).map(
-                  (character) => `
-                  <button
-                    class="character-option"
-                    type="button"
-                    data-character-id="${character.id}"
-                    role="radio"
-                    aria-checked="false"
-                    aria-label="${character.name} - ${character.description}"
-                  >
-                    <span class="character-swatch" style="background:${character.swatch};"></span>
-                    <span class="character-name">${character.name}</span>
-                  </button>
-                `,
-                ).join('')}
-                <button
-                  class="character-option character-option--random"
-                  type="button"
-                  data-character-random
-                  role="radio"
-                  aria-checked="false"
-                  aria-label="랜덤 선택 - 1/5 확률로 북극곰이 나옵니다"
-                >
-                  <span class="character-swatch character-swatch--random">?</span>
-                  <span class="character-name">랜덤</span>
-                </button>
-              </div>
-              <p class="character-picker-hint">랜덤은 1/5 확률로 <strong>북극곰</strong>이 등장합니다</p>
-            </div>
-            <div id="versus-picker" class="character-picker versus-picker" hidden>
-              <span class="character-picker-title">1P 캐릭터</span>
-              <div class="character-picker-grid" data-player-slot="1">
-                ${CHARACTERS.filter((character) => character.pickerVisible).map(
-                  (character) => `
-                  <button
-                    class="character-option"
-                    type="button"
-                    data-versus-id="${character.id}"
-                    data-player-slot="1"
-                    role="radio"
-                    aria-checked="false"
-                    aria-label="1P ${character.name}"
-                  >
-                    <span class="character-swatch" style="background:${character.swatch};"></span>
-                    <span class="character-name">${character.name}</span>
-                  </button>
-                `,
-                ).join('')}
-              </div>
-              <span class="character-picker-title">2P 캐릭터</span>
-              <div class="character-picker-grid" data-player-slot="2">
-                ${CHARACTERS.filter((character) => character.pickerVisible).map(
-                  (character) => `
-                  <button
-                    class="character-option"
-                    type="button"
-                    data-versus-id="${character.id}"
-                    data-player-slot="2"
-                    role="radio"
-                    aria-checked="false"
-                    aria-label="2P ${character.name}"
-                  >
-                    <span class="character-swatch" style="background:${character.swatch};"></span>
-                    <span class="character-name">${character.name}</span>
-                  </button>
-                `,
-                ).join('')}
-              </div>
-              <p class="character-picker-hint">같은 캐릭터는 동시에 고를 수 없어요</p>
-            </div>
-            <div id="online-picker" class="online-picker" hidden>
-              <div class="online-section">
-                <button id="online-create-btn" class="online-action" type="button">방 만들기</button>
-                <div id="online-room-id-row" class="online-room-id-row" hidden>
-                  <span class="online-room-id-label">방 ID</span>
-                  <code id="online-room-id" class="online-room-id"></code>
-                  <button id="online-copy-btn" class="online-mini-btn" type="button">복사</button>
-                </div>
-              </div>
-              <div class="online-section">
-                <label class="online-join-label" for="online-room-id-input">친구의 방 ID</label>
-                <div class="online-join-row">
-                  <input id="online-room-id-input" class="online-room-id-input" type="text" placeholder="예: 02d361" maxlength="32" autocomplete="off" spellcheck="false" />
-                  <button id="online-join-btn" class="online-action" type="button">들어가기</button>
-                </div>
-              </div>
-              <p id="online-status" class="online-status" role="status">방을 만들거나 친구의 방 ID를 입력하세요</p>
-              <p class="character-picker-hint">테스트할 때는 두 탭을 동시에 보이게 띄워주세요 — 비활성 탭은 브라우저가 멈춰서 락스텝이 진행되지 않습니다.</p>
-            </div>
-            <div id="online-lobby" class="online-lobby" hidden>
-              <div class="online-lobby-room">
-                <span class="online-lobby-room-label">방 ID</span>
-                <code id="online-lobby-room-id" class="online-room-id"></code>
-                <button id="online-lobby-copy" class="online-mini-btn" type="button">복사</button>
-              </div>
-              <div class="online-lobby-slots">
-                <div class="online-lobby-slot online-lobby-slot--self">
-                  <span class="online-lobby-slot-label">내 캐릭터</span>
-                  <div id="online-lobby-self-grid" class="online-lobby-grid">
-                    ${CHARACTERS.filter((character) => character.pickerVisible).map(
-                      (character) => `
-                      <button
-                        class="character-option"
-                        type="button"
-                        data-lobby-character-id="${character.id}"
-                        role="radio"
-                        aria-checked="false"
-                        aria-label="${character.name}"
-                      >
-                        <span class="character-swatch" style="background:${character.swatch};"></span>
-                        <span class="character-name">${character.name}</span>
-                      </button>
-                    `,
-                    ).join('')}
-                  </div>
-                </div>
-                <div class="online-lobby-slot online-lobby-slot--peer">
-                  <span class="online-lobby-slot-label">상대 캐릭터</span>
-                  <div class="online-lobby-peer-card">
-                    <span id="online-lobby-peer-swatch" class="character-swatch online-lobby-peer-swatch"></span>
-                    <span id="online-lobby-peer-name" class="character-name">선택 대기 중…</span>
-                  </div>
-                  <span id="online-lobby-peer-status" class="online-lobby-peer-status">아직 준비 안 됨</span>
-                </div>
-              </div>
-              <button id="online-lobby-leave" class="online-mini-btn online-lobby-leave" type="button">방 나가기</button>
-            </div>
-            <div id="keyboard-help-solo" class="keyboard-help" aria-label="키보드 조작법">
-              <span class="keyboard-help-title">키보드 조작</span>
-              <div class="keyboard-help-grid">
-                <span><kbd>WASD</kbd><kbd>방향키</kbd></span>
-                <strong>이동</strong>
-                <span><kbd>Shift</kbd><kbd>이동</kbd></span>
-                <strong>달리기</strong>
-                <span><kbd>Space</kbd></span>
-                <strong>구르기</strong>
-                <span><kbd>Enter</kbd></span>
-                <strong>시작</strong>
-              </div>
-            </div>
-            <div id="keyboard-help-versus" class="keyboard-help keyboard-help--versus" hidden>
-              <span class="keyboard-help-title">대결전 키보드 조작</span>
-              <div class="versus-keys">
-                <div class="versus-keys-row">
-                  <strong class="versus-keys-row-label">1P</strong>
-                  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
-                  <span><kbd>L Shift</kbd></span>
-                  <span><kbd>L Ctrl</kbd></span>
-                </div>
-                <div class="versus-keys-row">
-                  <strong class="versus-keys-row-label">2P</strong>
-                  <span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span>
-                  <span><kbd>R Shift</kbd></span>
-                  <span><kbd>R Ctrl</kbd></span>
-                </div>
-                <div class="versus-keys-legend">
-                  <span>이동 / 달리기 / 능력</span>
-                </div>
-              </div>
-            </div>
-            <div id="keyboard-help-online" class="keyboard-help" aria-label="온라인 키보드 조작" hidden>
-              <span class="keyboard-help-title">온라인 키보드 조작</span>
-              <div class="keyboard-help-grid">
-                <span><kbd>WASD</kbd><kbd>방향키</kbd></span>
-                <strong>내 캐릭터 이동</strong>
-                <span><kbd>Shift</kbd></span>
-                <strong>달리기</strong>
-                <span><kbd>Space</kbd></span>
-                <strong>구르기</strong>
-                <span><kbd>1</kbd><kbd>2</kbd></span>
-                <strong>시점 전환</strong>
-              </div>
-              <p class="character-picker-hint">두 컴퓨터 모두 같은 키로 자기 캐릭터를 조작합니다.</p>
-            </div>
-            <button id="start-button" class="primary-button" type="button">시작</button>
-          </section>
-        </div>
-        <div id="touch-controls" class="touch-controls">
-          <div id="joystick-base" class="joystick-base">
-            <div id="joystick-stick" class="joystick-stick"></div>
-          </div>
-          <div class="action-buttons">
-            <button id="roll-button" class="action-button roll-button" type="button" aria-label="구르기">
-              <span class="action-cooldown-ring" aria-hidden="true"></span>
-              <span id="roll-button-label" class="action-label">구르기</span>
-            </button>
-            <button id="run-button" class="action-button run-button" type="button" aria-label="달리기" aria-pressed="false">
-              <span class="action-label">달리기</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    `
-  }
 
   private getElement<T extends HTMLElement>(id: string): T {
-    const element = this.root.querySelector<T>(`#${id}`)
-    if (!element) {
-      throw new Error(`Missing element #${id}`)
-    }
-    return element
+    return getElement<T>(this.root, id)
   }
 
   private setupRenderer(): void {
@@ -646,8 +353,8 @@ class ChunsikDodgeGame {
       this.setMobileCameraMode(button.dataset.cameraMode === 'chunsik' ? 'chunsik' : 'arena')
       this.audio.playSfx(ASSETS.audio.uiClick, 0.28)
     })
-    this.rollButton.addEventListener('pointerdown', (event) => {
-      if (this.rollButton.disabled) return
+    this.hud.rollButton.addEventListener('pointerdown', (event) => {
+      if (this.hud.rollButton.disabled) return
       if (event.pointerType === 'mouse' && event.button !== 0) return
       event.preventDefault()
       if (this.online) {
@@ -656,17 +363,17 @@ class ChunsikDodgeGame {
       }
       this.tryAbility(this.players[0])
     })
-    this.runButton.addEventListener('pointerdown', (event) => {
+    this.hud.runButton.addEventListener('pointerdown', (event) => {
       event.preventDefault()
-      this.runButton.setPointerCapture(event.pointerId)
+      this.hud.runButton.setPointerCapture(event.pointerId)
       this.setRunButtonHeld(true)
     })
-    this.runButton.addEventListener('pointerup', (event) => {
+    this.hud.runButton.addEventListener('pointerup', (event) => {
       event.preventDefault()
       this.setRunButtonHeld(false)
     })
-    this.runButton.addEventListener('pointercancel', () => this.setRunButtonHeld(false))
-    this.runButton.addEventListener('lostpointercapture', () => this.setRunButtonHeld(false))
+    this.hud.runButton.addEventListener('pointercancel', () => this.setRunButtonHeld(false))
+    this.hud.runButton.addEventListener('lostpointercapture', () => this.setRunButtonHeld(false))
 
     this.joystickBase.addEventListener('pointerdown', (event) => this.startJoystick(event))
     window.addEventListener('pointermove', (event) => this.moveJoystick(event))
@@ -1207,10 +914,7 @@ class ChunsikDodgeGame {
     this.keyboardHelpSolo.hidden = !solo
     this.keyboardHelpVersus.hidden = !versus
     this.keyboardHelpOnline.hidden = !onlineLobby
-    this.bestPanel.hidden = !solo
-    this.p1Panel.hidden = !twoPlayer
-    this.p2Panel.hidden = !twoPlayer
-    this.statusValueP2.hidden = !twoPlayer
+    this.hud.setModeVisibility(solo, twoPlayer)
     this.touchControls.classList.toggle('is-hidden', !solo && !online)
     this.startButton.hidden = onlineMenu
     if (onlineLobby) {
@@ -1226,12 +930,8 @@ class ChunsikDodgeGame {
       this.menuTitle.textContent = '춘식이 미사일 회피'
       this.menuText.textContent = '날아오는 궤적 사이를 빠져나가 오래 버티세요.'
     }
-    if (versus) {
-      this.p1Name.textContent = this.versusP1Character.name
-      this.p2Name.textContent = this.versusP2Character.name
-    } else if (online) {
-      this.p1Name.textContent = this.versusP1Character.name
-      this.p2Name.textContent = this.versusP2Character.name
+    if (versus || online) {
+      this.hud.setPlayerNames(this.versusP1Character.name, this.versusP2Character.name)
     }
     document.body.classList.toggle('mode-versus', twoPlayer)
     this.updateStartButtonLabel()
@@ -1703,6 +1403,16 @@ class ChunsikDodgeGame {
   private static readonly ASH_DURATION_SEC = 0.45
   private static readonly SIMULATION_STEP = 1 / 60
   private static readonly MAX_SIM_STEPS_PER_FRAME = 8
+  private static readonly CHECKSUM_INTERVAL = 60
+  private static readonly CHECKSUM_HISTORY = 8
+  private static readonly PARTICLE_GEOMETRY = new THREE.SphereGeometry(1, 8, 8)
+  // 매 스텝 재사용하는 스크래치 객체 — 핫패스에서 new를 피하기 위한 용도라
+  // 호출 간 값이 유지된다고 가정하면 안 된다. ZERO_*는 읽기 전용.
+  private static readonly SCRATCH_MATRIX = new THREE.Matrix4()
+  private static readonly CAMERA_BASE = new THREE.Vector3()
+  private static readonly UP = new THREE.Vector3(0, 1, 0)
+  private static readonly ZERO_VEC3 = new THREE.Vector3()
+  private static readonly ZERO_VEC2 = new THREE.Vector2()
 
   private startAshEffect(player: PlayerRuntime): void {
     if (!player.group || player.ashTimer !== null) return
@@ -1797,12 +1507,8 @@ class ChunsikDodgeGame {
         player.group.position.y,
         player.group.position.z - move.y,
       )
-      const lookMatrix = new THREE.Matrix4().lookAt(
-        player.group.position,
-        player.lookTarget,
-        new THREE.Vector3(0, 1, 0),
-      )
-      player.targetQuaternion.setFromRotationMatrix(lookMatrix)
+      ChunsikDodgeGame.SCRATCH_MATRIX.lookAt(player.group.position, player.lookTarget, ChunsikDodgeGame.UP)
+      player.targetQuaternion.setFromRotationMatrix(ChunsikDodgeGame.SCRATCH_MATRIX)
       player.group.quaternion.slerp(player.targetQuaternion, 10 * delta)
 
       if (!rollAnimating) this.playAction(player, this.getMovementAction(player))
@@ -1875,57 +1581,15 @@ class ChunsikDodgeGame {
   private updateRunButtonState(): void {
     const player = this.players[0]
     const held = player ? this.isRunHeld(player) : false
-    this.runButton.classList.toggle('is-active', held)
-    this.runButton.setAttribute('aria-pressed', String(held))
+    this.hud.setRunActive(held)
   }
 
   private updateRollButtonState(): void {
-    const player = this.players[0]
-    if (!player) {
-      this.rollButton.disabled = false
-      return
-    }
-    const ability = player.character.ability
-    const label = ability === 'cloak' ? '클로킹' : '구르기'
-    const cooldownTotal = ability === 'cloak' ? CLOAK.cooldown : ROLL.cooldown
-    const isPlaying = this.state === 'playing'
-    const remaining = isPlaying ? Math.max(0, player.rollCooldownUntil - this.elapsed) : 0
-    const cooling = remaining > 0
-    const active = isPlaying && this.elapsed < (ability === 'cloak' ? player.cloakActiveUntil : player.rollAnimationUntil)
-    const progress = cooling ? THREE.MathUtils.clamp(remaining / cooldownTotal, 0, 1) : 0
-
-    this.rollButton.disabled = cooling
-    this.rollButton.classList.toggle('is-cooling', cooling)
-    this.rollButton.classList.toggle('is-rolling', active)
-    this.rollButton.style.setProperty('--cooldown-progress', `${progress * 360}deg`)
-    this.rollButtonLabel.textContent = label
-    this.rollButton.setAttribute('aria-label', label)
-
-    if (!active && (this.getStatusText(1) === '구르기' || this.getStatusText(1) === '클로킹')) {
-      this.setStatus(1, '회피 중')
-    }
+    this.hud.updateRollButton(this.players[0], this.state, this.elapsed)
   }
 
   private updateAbilityTimers(): void {
-    for (const player of this.players) {
-      const node = player.id === 1 ? this.abilityTimer : this.abilityTimerP2
-      const labelNode = player.id === 1 ? this.abilityTimerLabel : this.abilityTimerP2Label
-      const valueNode = player.id === 1 ? this.abilityTimerValue : this.abilityTimerP2Value
-      if (this.state !== 'playing') {
-        node.classList.remove('is-visible')
-        continue
-      }
-      const ability = player.character.ability
-      const until = ability === 'cloak' ? player.cloakActiveUntil : player.rollAnimationUntil
-      const remaining = until - this.elapsed
-      if (remaining <= 0) {
-        node.classList.remove('is-visible')
-        continue
-      }
-      labelNode.textContent = ability === 'cloak' ? '클로킹' : '구르기'
-      valueNode.textContent = `${remaining.toFixed(1)}초`
-      node.classList.add('is-visible')
-    }
+    this.hud.updateAbilityTimers(this.players, this.state, this.elapsed)
   }
 
   private playIdleVariant(player: PlayerRuntime, delta: number): void {
@@ -1961,7 +1625,7 @@ class ChunsikDodgeGame {
     if (this.spawnTimer >= interval) {
       this.spawnTimer = 0
       const kind = pickMissileKind(this.elapsed, gameRandom)
-      this.spawnMissileOfKind(kind)
+      this.missileSystem.spawnOfKind(kind, this.refreshMissileCtx())
       const doubleChance = PHASES[getPhaseIndex(this.elapsed)].doubleSpawnChance
       if (doubleChance > 0 && gameRandom() < doubleChance) {
         this.pendingSpawns.push({ at: this.elapsed + 0.18, kind: 'straight' })
@@ -1970,7 +1634,7 @@ class ChunsikDodgeGame {
 
     while (this.pendingSpawns.length > 0 && this.pendingSpawns[0].at <= this.elapsed) {
       const next = this.pendingSpawns.shift()!
-      this.spawnMissileOfKind(next.kind)
+      this.missileSystem.spawnOfKind(next.kind, this.refreshMissileCtx())
     }
 
     if (this.phaseLabelClearAt > 0 && this.elapsed >= this.phaseLabelClearAt) {
@@ -2002,287 +1666,46 @@ class ChunsikDodgeGame {
     this.shakeAmount = Math.max(this.shakeAmount, 0.45)
   }
 
-  private spawnMissileOfKind(kind: MissileKind): void {
-    if (this.players.length === 0) return
-    if (kind === 'volley') {
-      this.spawnVolley()
-      return
-    }
-    this.spawnSingleMissile(kind)
-  }
-
-  private spawnVolley(): void {
-    const side = gameRandomInt(4)
-    const fanOffsets = [-0.5, 0, 0.5]
-    for (const offset of fanOffsets) {
-      this.spawnSingleMissile('straight', { fixedSide: side, lateralOffset: offset })
-    }
-  }
-
-  private pickAimTarget(): THREE.Vector3 {
-    const alive = this.players.filter((p) => p.alive && p.group)
-    if (alive.length === 0) return new THREE.Vector3()
-    const choice = alive[gameRandomInt(alive.length)]
-    return choice.group!.position.clone()
-  }
-
-  private spawnSingleMissile(
-    kind: MissileKind,
-    opts: { fixedSide?: number; lateralOffset?: number } = {},
-  ): void {
-    if (this.players.length === 0) return
-    const side = opts.fixedSide ?? gameRandomInt(4)
-    const margin = 1.2
-    const spawn = new THREE.Vector3()
-    if (side === 0) {
-      spawn.set(gameRandomSpread(this.arena.width), 0.58, -this.arena.halfDepth - margin)
-    } else if (side === 1) {
-      spawn.set(this.arena.halfWidth + margin, 0.58, gameRandomSpread(this.arena.depth))
-    } else if (side === 2) {
-      spawn.set(gameRandomSpread(this.arena.width), 0.58, this.arena.halfDepth + margin)
-    } else {
-      spawn.set(-this.arena.halfWidth - margin, 0.58, gameRandomSpread(this.arena.depth))
-    }
-
-    const target = this.pickAimTarget()
-    const aimSpread = kind === 'homing' ? 0.4 : 1.2
-    target.x += gameRandomSpread(aimSpread)
-    target.z += gameRandomSpread(aimSpread)
-
-    if (opts.lateralOffset !== undefined) {
-      const perpendicular = side === 0 || side === 2
-        ? new THREE.Vector3(1, 0, 0)
-        : new THREE.Vector3(0, 0, 1)
-      target.addScaledVector(perpendicular, opts.lateralOffset * 3.2)
-    }
-
-    const direction = target.sub(spawn)
-    direction.y = 0
-    direction.normalize()
-
-    const phaseBoost = PHASES[getPhaseIndex(this.elapsed)].missileSpeedBoost
-    const speedMult = this.isSimMobile() ? MOBILE_TUNING.missileSpeedMult : 1
-    const baseSpeed = 4.5 + Math.min(5.5, this.elapsed * 0.08) + gameRandom() * 0.8 + phaseBoost
-    const kindSpeedMult = kind === 'big' ? 0.55 : kind === 'homing' ? 0.78 : 1
-    const speed = baseSpeed * speedMult * kindSpeedMult
-    const velocity = direction.multiplyScalar(speed)
-    const sizeMultiplier = kind === 'big' ? 1.85 : 1
-    const group = createMissileMesh({ kind, sizeMultiplier })
-    group.position.copy(spawn)
-    orientObjectToVelocity(group, velocity)
-    group.visible = false
-    this.scene.add(group)
-
-    const warning = this.createWarning(spawn, velocity)
-    this.scene.add(warning)
-
-    const radius = kind === 'big' ? 0.52 : 0.3
-    const homingStrength = kind === 'homing' ? 0.9 : 0
-
-    this.missiles.push({
-      group,
-      velocity,
-      warning,
-      radius,
-      age: 0,
-      armedAt: 0.46,
-      spin: gameRandom() > 0.5 ? 1 : -1,
-      playedSound: false,
-      rollClearedBy: new Set<PlayerId>(),
-      kind,
-      homingStrength,
-    })
-  }
-
-  private createWarning(spawn: THREE.Vector3, velocity: THREE.Vector3): THREE.Mesh {
-    const direction = velocity.clone().normalize()
-    const entry = this.getArenaEntryPoint(spawn, direction)
-    entry.addScaledVector(direction, 0.18)
-    const maxInsideDistance = this.getDistanceToArenaExit(entry, direction)
-    const length = THREE.MathUtils.clamp(maxInsideDistance * 0.9, 4.8, 11.5)
-    const warning = new THREE.Mesh(
-      new THREE.PlaneGeometry(length, 0.15),
-      new THREE.MeshBasicMaterial({
-        color: 0xd94636,
-        transparent: true,
-        opacity: 0.46,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    )
-    warning.rotation.x = -Math.PI / 2
-    warning.rotation.z = -Math.atan2(direction.z, direction.x)
-    warning.position.set(
-      entry.x + direction.x * (length * 0.5),
-      0.075,
-      entry.z + direction.z * (length * 0.5),
-    )
-    return warning
-  }
-
-  private getArenaEntryPoint(spawn: THREE.Vector3, direction: THREE.Vector3): THREE.Vector3 {
-    const candidates: THREE.Vector3[] = []
-
-    if (direction.x !== 0) {
-      for (const x of [-this.arena.halfWidth, this.arena.halfWidth]) {
-        const t = (x - spawn.x) / direction.x
-        const z = spawn.z + direction.z * t
-        if (t >= 0 && z >= -this.arena.halfDepth && z <= this.arena.halfDepth) {
-          candidates.push(new THREE.Vector3(x, 0.075, z))
-        }
-      }
-    }
-
-    if (direction.z !== 0) {
-      for (const z of [-this.arena.halfDepth, this.arena.halfDepth]) {
-        const t = (z - spawn.z) / direction.z
-        const x = spawn.x + direction.x * t
-        if (t >= 0 && x >= -this.arena.halfWidth && x <= this.arena.halfWidth) {
-          candidates.push(new THREE.Vector3(x, 0.075, z))
-        }
-      }
-    }
-
-    if (candidates.length === 0) {
-      return spawn.clone().addScaledVector(direction, 1.2)
-    }
-
-    candidates.sort((a, b) => a.distanceToSquared(spawn) - b.distanceToSquared(spawn))
-    return candidates[0] ?? spawn.clone().addScaledVector(direction, 1.2)
-  }
-
-  private getDistanceToArenaExit(entry: THREE.Vector3, direction: THREE.Vector3): number {
-    const distances: number[] = []
-    if (direction.x > 0) distances.push((this.arena.halfWidth - entry.x) / direction.x)
-    if (direction.x < 0) distances.push((-this.arena.halfWidth - entry.x) / direction.x)
-    if (direction.z > 0) distances.push((this.arena.halfDepth - entry.z) / direction.z)
-    if (direction.z < 0) distances.push((-this.arena.halfDepth - entry.z) / direction.z)
-    return Math.max(4.8, Math.min(...distances.filter((distance) => distance > 0)))
+  private refreshMissileCtx(): MissileSimContext {
+    const ctx = this.missileCtx
+    ctx.arena = this.arena
+    ctx.players = this.players
+    ctx.elapsed = this.elapsed
+    ctx.mobile = this.isSimMobile()
+    ctx.playerRadius = this.getPlayerRadius()
+    ctx.playing = this.state === 'playing'
+    return ctx
   }
 
   private updateMissiles(delta: number): void {
-    const hitPlayers = new Set<PlayerRuntime>()
-    for (let index = this.missiles.length - 1; index >= 0; index -= 1) {
-      const missile = this.missiles[index]
-      if (!missile) continue
-      missile.age += delta
-
-      const warningMaterial = missile.warning.material
-      if (warningMaterial instanceof THREE.MeshBasicMaterial) {
-        warningMaterial.opacity = Math.max(0, 0.46 - missile.age * 0.72)
-      }
-
-      if (missile.age < missile.armedAt) continue
-      if (!missile.group.visible) {
-        missile.group.visible = true
-      }
-      if (!missile.playedSound) {
-        this.audio.playSfx(Math.random() > 0.5 ? ASSETS.audio.attackA : ASSETS.audio.attackB, 0.22)
-        missile.playedSound = true
-      }
-
-      if (missile.homingStrength > 0) {
-        const aliveTargets = this.players.filter((p) => p.alive && p.group)
-        if (aliveTargets.length > 0) {
-          const closest = aliveTargets.reduce((acc, p) => {
-            const d = p.group!.position.distanceToSquared(missile.group.position)
-            return acc === null || d < acc.d ? { p, d } : acc
-          }, null as null | { p: PlayerRuntime; d: number })
-          if (closest) {
-            const toTarget = new THREE.Vector3(
-              closest.p.group!.position.x - missile.group.position.x,
-              0,
-              closest.p.group!.position.z - missile.group.position.z,
-            )
-            if (toTarget.lengthSq() > 0.0001) {
-              toTarget.normalize()
-              const currentSpeed = missile.velocity.length()
-              const currentDirection = missile.velocity.clone().setY(0).normalize()
-              const blend = 1 - Math.exp(-missile.homingStrength * delta)
-              currentDirection.lerp(toTarget, blend).normalize()
-              missile.velocity.set(
-                currentDirection.x * currentSpeed,
-                missile.velocity.y,
-                currentDirection.z * currentSpeed,
-              )
-              orientObjectToVelocity(missile.group, missile.velocity)
-            }
-          }
-        }
-      }
-
-      missile.group.position.addScaledVector(missile.velocity, delta)
-      missile.group.rotateZ(missile.spin * delta * 7)
-      const flame = missile.group.getObjectByName('flame')
-      if (flame) {
-        const pulse = 1 + Math.sin((this.elapsed + missile.age) * 28) * 0.16
-        flame.scale.setScalar(pulse)
-      }
-      const coreFlame = missile.group.getObjectByName('core-flame')
-      if (coreFlame) {
-        const pulse = 1 + Math.cos((this.elapsed + missile.age) * 31) * 0.12
-        coreFlame.scale.setScalar(pulse)
-      }
-      const trail = missile.group.getObjectByName('trail')
-      if (trail) {
-        const pulse = 1 + Math.sin((this.elapsed + missile.age) * 18) * 0.1
-        trail.scale.set(1, pulse, pulse)
-      }
-
-      if (this.state === 'playing') {
-        for (const player of this.players) {
-          if (!player.alive || !player.group) continue
-          const dx = player.group.position.x - missile.group.position.x
-          const dz = player.group.position.z - missile.group.position.z
-          const distance = Math.hypot(dx, dz)
-          const hitDistance = this.getPlayerRadius() + missile.radius
-          const rollActive = this.elapsed < player.rollAnimationUntil
-          const cloakActive = this.elapsed < player.cloakActiveUntil
-          if ((rollActive && distance < hitDistance + ROLL.passRadiusBonus) || cloakActive) {
-            this.markMissileRollCleared(missile, player)
-          } else if (!missile.rollClearedBy.has(player.id) && distance < hitDistance) {
-            hitPlayers.add(player)
-          }
-        }
-      }
-
-      const outside =
-        Math.abs(missile.group.position.x) > this.arena.halfWidth + 3.2 ||
-        Math.abs(missile.group.position.z) > this.arena.halfDepth + 3.2
-      if (outside) {
-        this.disposeMissile(index)
-      }
+    const hit = this.missileSystem.update(delta, this.refreshMissileCtx())
+    if (hit.size === 0 || this.state !== 'playing') return
+    for (const player of hit) {
+      player.alive = false
     }
-
-    if (hitPlayers.size > 0 && this.state === 'playing') {
-      for (const player of hitPlayers) {
-        player.alive = false
-      }
-      this.endGame()
-    }
+    this.endGame()
   }
 
-  private markMissileRollCleared(missile: Missile, player: PlayerRuntime): void {
-    if (missile.rollClearedBy.has(player.id)) return
-    missile.rollClearedBy.add(player.id)
-    missile.group.scale.multiplyScalar(0.94)
-    this.setStatus(player.id, '회피!')
-    const target = player.id
+  // 구르기/클로킹으로 미사일을 통과했을 때의 상태 표시 (MissileSystem 콜백)
+  private handleRollCleared(playerId: PlayerId): void {
+    this.setStatus(playerId, '회피!')
     window.setTimeout(() => {
-      if (this.state === 'playing' && this.getStatusText(target) === '회피!') {
-        this.setStatus(target, '회피 중')
+      if (this.state === 'playing' && this.getStatusText(playerId) === '회피!') {
+        this.setStatus(playerId, '회피 중')
       }
     }, 420)
   }
 
+  // 파티클은 단위 구 geometry를 공유하고 반지름은 scale로, 색은 material 재설정으로 표현한다.
   private spawnBurst(position: THREE.Vector3): void {
     for (let index = 0; index < 34; index += 1) {
-      const geometry = new THREE.SphereGeometry(THREE.MathUtils.randFloat(0.04, 0.11), 8, 8)
-      const material = new THREE.MeshBasicMaterial({
-        color: index % 3 === 0 ? 0xffdd6e : index % 3 === 1 ? 0xe05a3b : 0x2e7b82,
-        transparent: true,
-      })
-      const mesh = new THREE.Mesh(geometry, material)
+      const mesh =
+        this.particlePool.pop() ??
+        new THREE.Mesh(ChunsikDodgeGame.PARTICLE_GEOMETRY, new THREE.MeshBasicMaterial({ transparent: true }))
+      const material = mesh.material as THREE.MeshBasicMaterial
+      material.color.setHex(index % 3 === 0 ? 0xffdd6e : index % 3 === 1 ? 0xe05a3b : 0x2e7b82)
+      material.opacity = 1
+      mesh.scale.setScalar(THREE.MathUtils.randFloat(0.04, 0.11))
       mesh.position.copy(position)
       mesh.position.y = 0.7
       this.scene.add(mesh)
@@ -2312,8 +1735,7 @@ class ChunsikDodgeGame {
       }
       if (particle.age >= particle.life) {
         this.scene.remove(particle.mesh)
-        particle.mesh.geometry.dispose()
-        if (particle.mesh.material instanceof THREE.Material) particle.mesh.material.dispose()
+        this.particlePool.push(particle.mesh)
         this.particles.splice(index, 1)
       }
     }
@@ -2334,22 +1756,18 @@ class ChunsikDodgeGame {
   }
 
   private updateHud(): void {
-    this.timeValue.textContent = this.elapsed.toFixed(2)
-    this.bestValue.textContent = this.bestScore.toFixed(2)
-    this.waveValue.textContent = String(this.getWave())
+    this.hud.updateScore(this.elapsed, this.bestScore, this.getWave())
     if (this.mode === 'versus') {
-      this.p1Name.textContent = this.versusP1Character.name
-      this.p2Name.textContent = this.versusP2Character.name
+      this.hud.setPlayerNames(this.versusP1Character.name, this.versusP2Character.name)
     }
   }
 
   private setStatus(id: PlayerId, text: string): void {
-    if (id === 1) this.statusValue.textContent = text
-    else this.statusValueP2.textContent = text
+    this.hud.setStatus(id, text)
   }
 
   private getStatusText(id: PlayerId): string {
-    return (id === 1 ? this.statusValue.textContent : this.statusValueP2.textContent) ?? ''
+    return this.hud.getStatusText(id)
   }
 
   private updateSoundButton(): void {
@@ -2425,13 +1843,13 @@ class ChunsikDodgeGame {
 
   private updateCamera(delta: number): void {
     const cameraTargetIndex = this.online?.role === 'guest' ? 1 : 0
-    const player = this.players[cameraTargetIndex]?.group?.position ?? new THREE.Vector3()
+    const player = this.players[cameraTargetIndex]?.group?.position ?? ChunsikDodgeGame.ZERO_VEC3
     const mobileArenaView = window.innerWidth < 720
     const followingSelf = this.mode === 'solo' || !!this.online
     const mobileChunsikView = mobileArenaView && this.mobileCameraMode === 'chunsik' && followingSelf
 
     if (mobileChunsikView) {
-      const input = this.players[cameraTargetIndex]?.input ?? new THREE.Vector2()
+      const input = this.players[cameraTargetIndex]?.input ?? ChunsikDodgeGame.ZERO_VEC2
       this.mobileChunsikCameraPanTarget.set(
         THREE.MathUtils.clamp(player.x * 0.34 + input.x * 0.72, -3.4, 3.4),
         THREE.MathUtils.clamp(player.z * 0.1 + input.y * 0.28, -0.95, 0.95),
@@ -2442,20 +1860,18 @@ class ChunsikDodgeGame {
     }
 
     const desktopArenaView = !mobileArenaView && followingSelf && this.mobileCameraMode === 'arena'
-    let base: THREE.Vector3
+    const base = ChunsikDodgeGame.CAMERA_BASE
     if (this.mode === 'versus') {
       const versusScale = Math.max(this.arena.width / 17, this.arena.depth / 11)
-      base = mobileArenaView
-        ? new THREE.Vector3(0, 30 * versusScale, 7.6 * versusScale)
-        : new THREE.Vector3(0, 14.2 * versusScale, 13.4 * versusScale)
+      if (mobileArenaView) base.set(0, 30 * versusScale, 7.6 * versusScale)
+      else base.set(0, 14.2 * versusScale, 13.4 * versusScale)
     } else if (mobileArenaView) {
-      base = mobileChunsikView
-        ? new THREE.Vector3(this.mobileChunsikCameraPan.x, 15.6, 16.4 + this.mobileChunsikCameraPan.y)
-        : new THREE.Vector3(0, 27.5, 6.6)
+      if (mobileChunsikView) base.set(this.mobileChunsikCameraPan.x, 15.6, 16.4 + this.mobileChunsikCameraPan.y)
+      else base.set(0, 27.5, 6.6)
     } else if (desktopArenaView) {
-      base = new THREE.Vector3(0, 14.2, 13.4)
+      base.set(0, 14.2, 13.4)
     } else {
-      base = new THREE.Vector3(player.x * 0.16, 9.5, 12.2 + player.z * 0.12)
+      base.set(player.x * 0.16, 9.5, 12.2 + player.z * 0.12)
     }
     if (this.shakeAmount > 0) {
       base.x += THREE.MathUtils.randFloatSpread(this.shakeAmount * 0.14)
@@ -2479,42 +1895,15 @@ class ChunsikDodgeGame {
   }
 
   private clearMissiles(): void {
-    for (let index = this.missiles.length - 1; index >= 0; index -= 1) {
-      this.disposeMissile(index)
-    }
-  }
-
-  private disposeMissile(index: number): void {
-    const missile = this.missiles[index]
-    if (!missile) return
-    this.scene.remove(missile.group)
-    this.scene.remove(missile.warning)
-    missile.group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose()
-        this.disposeMaterial(child.material)
-      }
-    })
-    missile.warning.geometry.dispose()
-    this.disposeMaterial(missile.warning.material)
-    this.missiles.splice(index, 1)
+    this.missileSystem.clear()
   }
 
   private clearParticles(): void {
     for (const particle of this.particles) {
       this.scene.remove(particle.mesh)
-      particle.mesh.geometry.dispose()
-      this.disposeMaterial(particle.mesh.material)
+      this.particlePool.push(particle.mesh)
     }
     this.particles.length = 0
-  }
-
-  private disposeMaterial(material: THREE.Material | THREE.Material[]): void {
-    if (Array.isArray(material)) {
-      for (const item of material) item.dispose()
-    } else {
-      material.dispose()
-    }
   }
 
   private animate(): void {
@@ -2863,6 +2252,8 @@ class ChunsikDodgeGame {
     this.syncCounter = 0
     this.peerAbilityWasDown = false
     this.localAbilityWasDown = false
+    this.localChecksums.clear()
+    this.peerChecksums.clear()
     clearRngSeed()
   }
 
@@ -2872,6 +2263,8 @@ class ChunsikDodgeGame {
     this.syncCounter = 0
     this.peerAbilityWasDown = false
     this.localAbilityWasDown = false
+    this.localChecksums.clear()
+    this.peerChecksums.clear()
     this.localReady = false
     this.peerReady = false
     this.online.local.reset()
@@ -2925,6 +2318,10 @@ class ChunsikDodgeGame {
     }
     if (kind === MESSAGE_KIND.READY) {
       void this.applyPeerReady(payload)
+      return
+    }
+    if (kind === MESSAGE_KIND.CHECKSUM) {
+      this.applyPeerChecksum(payload)
       return
     }
   }
@@ -3010,7 +2407,7 @@ class ChunsikDodgeGame {
     if (!this.online.isChannelOpen()) return false
     if (this.players.length < 2) return false
 
-    const lead = this.online.local.peekNextCounter() - this.syncCounter
+    const lead = syncDiff(this.online.local.peekNextCounter(), this.syncCounter)
     if (lead < BUFFER_LENGTH) {
       this.online.enqueueLocal(this.pollLocalInput())
     }
@@ -3030,7 +2427,84 @@ class ChunsikDodgeGame {
 
     this.simulateStep(dt)
     this.syncCounter = (this.syncCounter + 1) % SYNC_DIVISOR
+    if (this.syncCounter % ChunsikDodgeGame.CHECKSUM_INTERVAL === 0) {
+      this.exchangeChecksum(this.syncCounter)
+    }
     return true
+  }
+
+  // 락스텝 디싱크 감지용 시뮬 상태 해시. 시뮬에 영향을 주는 상태만 포함하며
+  // (연출·애니메이션 제외), 양쪽 피어가 같은 틱에서 같은 값을 얻어야 한다.
+  // imul 기반 FNV-1a 변형이라 모든 JS 엔진에서 비트 단위로 동일하다.
+  private computeSimChecksum(): number {
+    let h = 0x811c9dc5 | 0
+    const mix = (v: number) => {
+      h = Math.imul(h ^ (v | 0), 0x01000193)
+    }
+    const q = (v: number) => Math.round(v * 1000)
+    mix(q(this.elapsed))
+    for (const player of this.players) {
+      mix(player.alive ? 1 : 0)
+      if (player.group) {
+        mix(q(player.group.position.x))
+        mix(q(player.group.position.z))
+      }
+    }
+    const missiles = this.missileSystem.missiles
+    mix(missiles.length)
+    for (const missile of missiles) {
+      mix(q(missile.group.position.x))
+      mix(q(missile.group.position.z))
+    }
+    return h >>> 0
+  }
+
+  private exchangeChecksum(counter: number): void {
+    if (!this.online) return
+    const hash = this.computeSimChecksum()
+    this.localChecksums.set(counter, hash)
+    this.trimChecksumMap(this.localChecksums)
+    const payload = new Uint8Array(6)
+    const view = new DataView(payload.buffer)
+    view.setUint16(0, counter, true)
+    view.setUint32(2, hash, true)
+    this.online.sendControl(MESSAGE_KIND.CHECKSUM, payload)
+    this.compareChecksums(counter)
+  }
+
+  private applyPeerChecksum(payload?: Uint8Array): void {
+    if (!payload || payload.byteLength < 6) return
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+    const counter = view.getUint16(0, true)
+    const hash = view.getUint32(2, true)
+    this.peerChecksums.set(counter, hash)
+    this.trimChecksumMap(this.peerChecksums)
+    this.compareChecksums(counter)
+  }
+
+  private compareChecksums(counter: number): void {
+    const local = this.localChecksums.get(counter)
+    const peer = this.peerChecksums.get(counter)
+    if (local === undefined || peer === undefined) return
+    this.localChecksums.delete(counter)
+    this.peerChecksums.delete(counter)
+    if (local !== peer) this.handleDesync(counter)
+  }
+
+  private trimChecksumMap(map: Map<number, number>): void {
+    while (map.size > ChunsikDodgeGame.CHECKSUM_HISTORY) {
+      const oldest = map.keys().next().value
+      if (oldest === undefined) return
+      map.delete(oldest)
+    }
+  }
+
+  private handleDesync(counter: number): void {
+    console.error(`[lockstep] desync detected at tick ${counter}`)
+    if (this.state !== 'playing') return
+    this.resetToReady()
+    this.menuTitle.textContent = '동기화 오류'
+    this.menuText.textContent = '두 화면의 게임 상태가 어긋나 라운드를 종료했어요. 한 번 더 시작해주세요.'
   }
 
   private applyOnlineInputToPlayer(player: PlayerRuntime, input: PlayerInput, isLocal: boolean): void {

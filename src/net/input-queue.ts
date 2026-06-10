@@ -9,6 +9,7 @@ export const MESSAGE_KIND = {
   RESTART_ROUND: 1,
   CHARACTER_PICK: 2,
   READY: 3,
+  CHECKSUM: 4,
 } as const
 export type MessageKind = (typeof MESSAGE_KIND)[keyof typeof MESSAGE_KIND]
 
@@ -17,7 +18,7 @@ export type InputWithSync = {
   input: PlayerInput
 }
 
-function syncDiff(a: number, b: number): number {
+export function syncDiff(a: number, b: number): number {
   let d = a - b
   if (d > SYNC_DIVISOR / 2) d -= SYNC_DIVISOR
   else if (d < -SYNC_DIVISOR / 2) d += SYNC_DIVISOR

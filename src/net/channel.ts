@@ -1,18 +1,23 @@
 import type { Signaling } from './signaling'
 
-// TURN credential은 운영 시 metered.ca 무료 계정 발급(월 50GB)으로 교체 권장.
-// 현재 공개 credential은 동작이 보장되지 않으며 트래픽 제한이 있습니다.
+// TURN 설정은 빌드타임 env(VITE_TURN_*)로 주입한다 — .env.example 참고.
+// P2P 특성상 클라이언트 노출은 불가피하지만, 소스 하드코딩 대신 env로 두면 교체가 쉽다.
+// env 미설정 시 openrelay 공개 credential로 폴백하는데, 동작이 보장되지 않으며
+// 트래픽 제한이 있으므로 운영 시 metered.ca 무료 계정 발급(월 50GB)을 권장.
+const TURN_URLS = (
+  import.meta.env.VITE_TURN_URLS ??
+  'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp'
+).split(',')
+const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME ?? 'openrelayproject'
+const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL ?? 'openrelayproject'
+
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp',
-    ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
+    urls: TURN_URLS,
+    username: TURN_USERNAME,
+    credential: TURN_CREDENTIAL,
   },
 ]
 
