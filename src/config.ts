@@ -65,6 +65,7 @@ export const STORAGE_KEYS = {
   sound: 'chunsik-dodge-3d-sound',
   camera: 'chunsik-dodge-3d-mobile-camera',
   characterSolo: 'chunsik-dodge-3d-character-solo',
+  characterSoloRandom: 'chunsik-dodge-3d-character-solo-random',
   characterVersusP1: 'chunsik-dodge-3d-character-versus-p1',
   characterVersusP2: 'chunsik-dodge-3d-character-versus-p2',
   characterOnline: 'chunsik-dodge-3d-character-online',

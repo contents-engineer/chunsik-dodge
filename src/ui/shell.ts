@@ -110,13 +110,13 @@ export function renderShellHtml(): string {
                   data-character-random
                   role="radio"
                   aria-checked="false"
-                  aria-label="랜덤 선택 - 1/5 확률로 북극곰이 나옵니다"
+                  aria-label="랜덤 선택 - 매 판 새로 뽑으며 1/5 확률로 북극곰이 나옵니다"
                 >
                   <span class="character-swatch character-swatch--random">?</span>
                   <span class="character-name">랜덤</span>
                 </button>
               </div>
-              <p class="character-picker-hint">랜덤은 1/5 확률로 <strong>북극곰</strong>이 등장합니다</p>
+              <p class="character-picker-hint">랜덤은 매 판 새로 뽑아요 — 1/5 확률로 <strong>북극곰</strong>이 등장합니다</p>
             </div>
             <div id="versus-picker" class="character-picker versus-picker" hidden>
               <span class="character-picker-title">1P 캐릭터</span>

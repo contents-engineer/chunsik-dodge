@@ -155,7 +155,9 @@ class ChunsikDodgeGame {
     localStorage.getItem(STORAGE_KEYS.characterVersusP1) ?? DEFAULT_CHARACTER_ID,
   )
   private versusP2Character: CharacterDefinition = this.pickInitialP2Character()
-  private soloPickerRandom = false
+  // 랜덤 선택 상태. 켜져 있으면 매 판 시작 시 캐릭터를 새로 뽑는다.
+  private soloPickerRandom = localStorage.getItem(STORAGE_KEYS.characterSoloRandom) === 'on'
+  private soloStartPending = false
   private players: PlayerRuntime[] = []
   private bestScore = Number(localStorage.getItem(STORAGE_KEYS.best) ?? 0)
   private elapsed = 0
@@ -426,6 +428,7 @@ class ChunsikDodgeGame {
         const next = pickRandomCharacter()
         this.audio.playSfx(ASSETS.audio.uiClick, 0.32)
         this.soloPickerRandom = true
+        localStorage.setItem(STORAGE_KEYS.characterSoloRandom, 'on')
         if (next.id !== this.soloCharacter.id) {
           this.soloCharacter = next
           localStorage.setItem(STORAGE_KEYS.characterSolo, next.id)
@@ -440,6 +443,7 @@ class ChunsikDodgeGame {
       const next = findCharacter(characterId)
       const sameId = next.id === this.soloCharacter.id
       this.soloPickerRandom = false
+      localStorage.setItem(STORAGE_KEYS.characterSoloRandom, 'off')
       if (!sameId) {
         this.soloCharacter = next
         localStorage.setItem(STORAGE_KEYS.characterSolo, next.id)
@@ -2410,7 +2414,30 @@ class ChunsikDodgeGame {
       return
     }
     if (this.mode === 'online') return
+    if (this.mode === 'solo' && this.soloPickerRandom) {
+      void this.rerollSoloCharacterAndStart()
+      return
+    }
     this.startGame()
+  }
+
+  // 랜덤 선택 상태면 매 판 시작 직전에 다시 뽑는다. 모델 교체가 비동기라
+  // 로딩이 끝난 뒤 시작하며, 그동안의 중복 시작 요청(Enter 연타 등)은 무시한다.
+  private async rerollSoloCharacterAndStart(): Promise<void> {
+    if (this.soloStartPending) return
+    this.soloStartPending = true
+    try {
+      const next = pickRandomCharacter()
+      if (next.id !== this.soloCharacter.id) {
+        this.soloCharacter = next
+        localStorage.setItem(STORAGE_KEYS.characterSolo, next.id)
+        await this.applySelectionToPlayers()
+      }
+      this.updateCharacterPicker()
+      this.startGame()
+    } finally {
+      this.soloStartPending = false
+    }
   }
 
   private handleOnlineControl(kind: MessageKind, payload?: Uint8Array): void {
