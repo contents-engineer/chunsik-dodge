@@ -7,6 +7,19 @@ export type SignalErrorReason =
   | 'ws-closed'
   | 'ws-error'
 
+export type RoomVisibility = 'public' | 'private'
+
+export type RoomSummary = {
+  roomId: string
+  hostName: string
+  createdAt: number
+}
+
+export type CreateRoomOptions = {
+  visibility?: RoomVisibility
+  hostName?: string
+}
+
 export type SignalingEvents = {
   onOpen?: () => void
   onCreated?: (roomId: string) => void
@@ -14,6 +27,7 @@ export type SignalingEvents = {
   onPeerJoined?: () => void
   onPeerLeft?: () => void
   onSignal?: (payload: unknown) => void
+  onRoomList?: (rooms: RoomSummary[]) => void
   onError?: (reason: SignalErrorReason) => void
   onClose?: () => void
 }
@@ -24,6 +38,7 @@ type ServerMessage =
   | { type: 'peer-joined' }
   | { type: 'peer-left' }
   | { type: 'signal'; payload: unknown }
+  | { type: 'rooms'; rooms: RoomSummary[] }
   | { type: 'error'; reason: SignalErrorReason }
 
 export class Signaling {
@@ -56,12 +71,17 @@ export class Signaling {
     })
   }
 
-  createRoom(): void {
-    this.sendOrError({ type: 'create' })
+  createRoom(options: CreateRoomOptions = {}): void {
+    this.sendOrError({ type: 'create', ...options })
   }
 
   joinRoom(roomId: string): void {
     this.sendOrError({ type: 'join', roomId })
+  }
+
+  // 공개 대기실 구독 — 서버가 즉시 목록을 보내고 이후 변동마다 푸시한다
+  requestRoomList(): void {
+    this.sendOrError({ type: 'list' })
   }
 
   sendSignal(payload: unknown): void {
@@ -112,6 +132,9 @@ export class Signaling {
         return
       case 'signal':
         this.events.onSignal?.(msg.payload)
+        return
+      case 'rooms':
+        this.events.onRoomList?.(Array.isArray(msg.rooms) ? msg.rooms : [])
         return
       case 'error':
         this.events.onError?.(msg.reason)

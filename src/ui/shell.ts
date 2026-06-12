@@ -161,7 +161,14 @@ export function renderShellHtml(): string {
             </div>
             <div id="online-picker" class="online-picker" hidden>
               <div class="online-section">
-                <button id="online-create-btn" class="online-action" type="button">방 만들기</button>
+                <div class="online-create-row">
+                  <div id="online-visibility" class="online-visibility" role="radiogroup" aria-label="방 공개 설정">
+                    <button class="online-visibility-option" type="button" data-room-visibility="public" role="radio" aria-checked="true">공개</button>
+                    <button class="online-visibility-option" type="button" data-room-visibility="private" role="radio" aria-checked="false">비공개</button>
+                  </div>
+                  <button id="online-create-btn" class="online-action" type="button">방 만들기</button>
+                </div>
+                <p id="online-visibility-hint" class="online-visibility-hint">공개 방은 아래 대기실 목록에 노출됩니다</p>
                 <div id="online-room-id-row" class="online-room-id-row" hidden>
                   <span class="online-room-id-label">방 ID</span>
                   <code id="online-room-id" class="online-room-id"></code>
@@ -169,13 +176,19 @@ export function renderShellHtml(): string {
                 </div>
               </div>
               <div class="online-section">
-                <label class="online-join-label" for="online-room-id-input">친구의 방 ID</label>
+                <span class="online-room-list-title">공개 대기실</span>
+                <div id="online-room-list" class="online-room-list">
+                  <p class="online-room-list-empty">지금 열려 있는 공개 방이 없어요</p>
+                </div>
+              </div>
+              <div class="online-section">
+                <label class="online-join-label" for="online-room-id-input">비공개 방 ID로 입장</label>
                 <div class="online-join-row">
                   <input id="online-room-id-input" class="online-room-id-input" type="text" placeholder="예: 02d361" maxlength="32" autocomplete="off" spellcheck="false" />
                   <button id="online-join-btn" class="online-action" type="button">들어가기</button>
                 </div>
               </div>
-              <p id="online-status" class="online-status" role="status">방을 만들거나 친구의 방 ID를 입력하세요</p>
+              <p id="online-status" class="online-status" role="status">방을 만들거나 대기실에서 방을 고르세요</p>
               <p class="character-picker-hint">테스트할 때는 두 탭을 동시에 보이게 띄워주세요 — 비활성 탭은 브라우저가 멈춰서 락스텝이 진행되지 않습니다.</p>
             </div>
             <div id="online-lobby" class="online-lobby" hidden>

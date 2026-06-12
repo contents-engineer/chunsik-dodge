@@ -36,7 +36,8 @@ import {
 } from './difficulty'
 import { MissileSystem, type MissileSimContext } from './missile-system'
 import { gameRandom, setRngSeed, clearRngSeed } from './rng'
-import { OnlineNet, type OnlineRole, type OnlineNetEvents } from './net/online-net'
+import { OnlineNet, SIGNAL_URL, type OnlineRole, type OnlineNetEvents } from './net/online-net'
+import { Signaling, type RoomSummary, type RoomVisibility } from './net/signaling'
 import type { PlayerInput } from './net/input-packing'
 import { SYNC_DIVISOR, BUFFER_LENGTH, MESSAGE_KIND, syncDiff, type MessageKind } from './net/input-queue'
 import type {
@@ -78,6 +79,9 @@ class ChunsikDodgeGame {
   private readonly soloPicker: HTMLDivElement
   private readonly versusPicker: HTMLDivElement
   private readonly onlinePicker: HTMLDivElement
+  private readonly onlineVisibilityGroup: HTMLDivElement
+  private readonly onlineVisibilityHint: HTMLParagraphElement
+  private readonly onlineRoomList: HTMLDivElement
   private readonly onlineCreateBtn: HTMLButtonElement
   private readonly onlineJoinBtn: HTMLButtonElement
   private readonly onlineCopyBtn: HTMLButtonElement
@@ -160,6 +164,12 @@ class ChunsikDodgeGame {
   private simAccumulator = 0
   private online: OnlineNet | null = null
   private onlinePhase: 'menu' | 'lobby' = 'menu'
+  private roomVisibility: RoomVisibility =
+    (localStorage.getItem(STORAGE_KEYS.roomVisibility) as RoomVisibility) === 'private' ? 'private' : 'public'
+  // 온라인 메뉴에서 공개 대기실 목록만 받아오는 가벼운 시그널 연결.
+  // 방을 만들거나 들어가면 닫고, 메뉴로 돌아오면 다시 연다 (syncLobbyBrowser).
+  private lobbyBrowser: Signaling | null = null
+  private suppressLobbyBrowser = false
   private localReady = false
   private peerReady = false
   private syncCounter = 0
@@ -199,6 +209,9 @@ class ChunsikDodgeGame {
     this.soloPicker = this.getElement('character-picker')
     this.versusPicker = this.getElement('versus-picker')
     this.onlinePicker = this.getElement('online-picker')
+    this.onlineVisibilityGroup = this.getElement('online-visibility')
+    this.onlineVisibilityHint = this.getElement('online-visibility-hint')
+    this.onlineRoomList = this.getElement('online-room-list')
     this.onlineCreateBtn = this.getElement('online-create-btn')
     this.onlineJoinBtn = this.getElement('online-join-btn')
     this.onlineCopyBtn = this.getElement('online-copy-btn')
@@ -726,6 +739,7 @@ class ChunsikDodgeGame {
     await this.applyActiveArena()
     await this.createPlayersForMode()
     this.resetToReady()
+    this.syncLobbyBrowser()
   }
 
   private async applySelectionToPlayers(): Promise<void> {
@@ -1991,6 +2005,26 @@ class ChunsikDodgeGame {
   }
 
   private setupOnlineUi(): void {
+    this.updateVisibilityToggle()
+    this.onlineVisibilityGroup.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-room-visibility]')
+      if (!button) return
+      const next: RoomVisibility = button.dataset.roomVisibility === 'private' ? 'private' : 'public'
+      if (next === this.roomVisibility) return
+      this.audio.playSfx(ASSETS.audio.uiClick, 0.28)
+      this.roomVisibility = next
+      localStorage.setItem(STORAGE_KEYS.roomVisibility, next)
+      this.updateVisibilityToggle()
+    })
+    this.onlineRoomList.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-join-room-id]')
+      if (!button) return
+      if (this.online) return
+      const roomId = button.dataset.joinRoomId
+      if (!roomId) return
+      this.audio.playSfx(ASSETS.audio.uiClick, 0.3)
+      void this.startOnlineGuest(roomId)
+    })
     this.onlineCreateBtn.addEventListener('click', () => {
       void this.startOnlineHost()
     })
@@ -2033,6 +2067,74 @@ class ChunsikDodgeGame {
       this.audio.playSfx(ASSETS.audio.uiClick, 0.3)
       this.leaveOnlineLobby()
     })
+  }
+
+  private updateVisibilityToggle(): void {
+    for (const button of this.onlineVisibilityGroup.querySelectorAll<HTMLButtonElement>('[data-room-visibility]')) {
+      const active = button.dataset.roomVisibility === this.roomVisibility
+      button.classList.toggle('is-active', active)
+      button.setAttribute('aria-checked', String(active))
+    }
+    this.onlineVisibilityHint.textContent =
+      this.roomVisibility === 'public'
+        ? '공개 방은 아래 대기실 목록에 노출됩니다'
+        : '비공개 방은 방 ID를 아는 사람만 들어올 수 있어요'
+  }
+
+  // 온라인 메뉴(방 만들기 전)에서만 대기실 구독 연결을 유지한다
+  private syncLobbyBrowser(): void {
+    const shouldBrowse =
+      this.mode === 'online' && this.onlinePhase === 'menu' && !this.online && !this.suppressLobbyBrowser
+    if (!shouldBrowse) {
+      if (this.lobbyBrowser) {
+        this.lobbyBrowser.close()
+        this.lobbyBrowser = null
+      }
+      return
+    }
+    if (this.lobbyBrowser) return
+    const browser = new Signaling(SIGNAL_URL, {
+      onOpen: () => browser.requestRoomList(),
+      onRoomList: (rooms) => {
+        if (this.lobbyBrowser === browser) this.renderRoomList(rooms)
+      },
+      onClose: () => {
+        if (this.lobbyBrowser === browser) this.lobbyBrowser = null
+      },
+      onError: () => {},
+    })
+    this.lobbyBrowser = browser
+    browser.connect()
+  }
+
+  // hostName은 외부 입력이므로 innerHTML이 아닌 createElement/textContent로만 그린다
+  private renderRoomList(rooms: RoomSummary[]): void {
+    this.onlineRoomList.replaceChildren()
+    if (rooms.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'online-room-list-empty'
+      empty.textContent = '지금 열려 있는 공개 방이 없어요'
+      this.onlineRoomList.appendChild(empty)
+      return
+    }
+    const sorted = [...rooms].sort((a, b) => b.createdAt - a.createdAt)
+    for (const room of sorted) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'online-room-item'
+      button.dataset.joinRoomId = room.roomId
+      const name = document.createElement('span')
+      name.className = 'online-room-item-name'
+      name.textContent = `${room.hostName}의 방`
+      const id = document.createElement('code')
+      id.className = 'online-room-item-id'
+      id.textContent = room.roomId
+      const action = document.createElement('span')
+      action.className = 'online-room-item-action'
+      action.textContent = '입장'
+      button.append(name, id, action)
+      this.onlineRoomList.appendChild(button)
+    }
   }
 
   private getOwnSlot(): 1 | 2 {
@@ -2099,8 +2201,9 @@ class ChunsikDodgeGame {
     this.setOnlineButtonsBusy(false)
     this.onlineRoomIdRow.hidden = true
     this.onlineRoomIdLabel.textContent = ''
-    this.setOnlineStatus('방을 만들거나 친구의 방 ID를 입력하세요')
+    this.setOnlineStatus('방을 만들거나 대기실에서 방을 고르세요')
     this.updateModeChrome()
+    this.syncLobbyBrowser()
   }
 
   private toggleLocalReady(): void {
@@ -2155,7 +2258,10 @@ class ChunsikDodgeGame {
       },
       onControl: (kind, payload) => this.handleOnlineControl(kind, payload),
     })
-    net.connectAsHost()
+    net.connectAsHost({
+      visibility: this.roomVisibility,
+      hostName: this.storedPickable(STORAGE_KEYS.characterOnline, CHARACTERS[0]!).name,
+    })
   }
 
   private async startOnlineGuest(roomId: string): Promise<void> {
@@ -2206,6 +2312,7 @@ class ChunsikDodgeGame {
     } else {
       this.updateModeChrome()
     }
+    this.syncLobbyBrowser()
   }
 
   private formatOnlineError(reason: string, detail?: unknown): string {
@@ -2224,6 +2331,7 @@ class ChunsikDodgeGame {
 
   async enterOnlineMode(role: OnlineRole, events: OnlineNetEvents = {}): Promise<OnlineNet> {
     this.exitOnlineMode()
+    this.suppressLobbyBrowser = true
     const own = this.storedPickable(STORAGE_KEYS.characterOnline, CHARACTERS[0]!)
     if (role === 'host') {
       this.versusP1Character = own
@@ -2239,6 +2347,8 @@ class ChunsikDodgeGame {
     await this.createPlayersForMode()
     this.resetToReady()
     this.online = new OnlineNet(role, events)
+    this.suppressLobbyBrowser = false
+    this.syncLobbyBrowser()
     return this.online
   }
 

@@ -70,6 +70,7 @@ export const STORAGE_KEYS = {
   characterOnline: 'chunsik-dodge-3d-character-online',
   mode: 'chunsik-dodge-3d-mode',
   versusMap: 'chunsik-dodge-3d-versus-map',
+  roomVisibility: 'chunsik-dodge-3d-room-visibility',
 }
 
 export const P1_BINDINGS: PlayerBindings = {

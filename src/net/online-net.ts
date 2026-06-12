@@ -1,5 +1,5 @@
 import { PeerChannel } from './channel'
-import { Signaling, type SignalErrorReason } from './signaling'
+import { Signaling, type CreateRoomOptions, type SignalErrorReason } from './signaling'
 import { LocalInputQueue, MESSAGE_KIND, PeerInputQueue, type MessageKind } from './input-queue'
 import type { PlayerInput } from './input-packing'
 
@@ -43,19 +43,19 @@ export class OnlineNet {
     return this.channelOpen
   }
 
-  connectAsHost(): void {
-    this.connect(null)
+  connectAsHost(options: CreateRoomOptions = {}): void {
+    this.connect(null, options)
   }
 
   connectAsGuest(roomId: string): void {
     this.connect(roomId)
   }
 
-  private connect(joinRoomId: string | null): void {
+  private connect(joinRoomId: string | null, createOptions: CreateRoomOptions = {}): void {
     this.teardown()
     const signaling = new Signaling(SIGNAL_URL, {
       onOpen: () => {
-        if (this.role === 'host') signaling.createRoom()
+        if (this.role === 'host') signaling.createRoom(createOptions)
         else if (joinRoomId) signaling.joinRoom(joinRoomId)
       },
       onCreated: (id) => {
