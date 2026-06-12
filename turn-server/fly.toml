@@ -1,0 +1,27 @@
+# fly.toml app configuration file generated for chunsik-dodge-turn on 2026-05-22T11:13:27+09:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'chunsik-dodge-turn'
+primary_region = 'nrt'
+
+[build]
+
+[[services]]
+  protocol = 'udp'
+  internal_port = 3478
+
+  [[services.ports]]
+    port = 3478
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 3478
+
+  [[services.ports]]
+    port = 3478
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
