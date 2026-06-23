@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "multiplayer-game": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "multiplayer-game/SKILL.md",
+      "computedHash": "6babd4c1abc4b38ca970d9f37d7c8b5bf021233758fee8480a305892f066de1e"
+    }
+  }
+}
